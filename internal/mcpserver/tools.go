@@ -30,7 +30,7 @@ type PointArgs struct {
 	X          int    `json:"x"`
 	Y          int    `json:"y"`
 	WindowID   string `json:"window_id,omitempty" jsonschema:"Expected foreground window ID; rejects input into another window"`
-	DurationMS int    `json:"duration_ms,omitempty" jsonschema:"macOS cursor movement; 0 or omitted uses local motion mode; otherwise 10..5000 ms. Other backends support only 0"`
+	DurationMS int    `json:"duration_ms,omitempty" jsonschema:"macOS/X11 movement: 10..5000ms. Default 0 uses macOS local motion mode, immediate X11 movement; Windows supports only 0"`
 }
 type ClickArgs struct {
 	Motion   string `json:"motion,omitempty" jsonschema:"macOS pointer approach: rapid (20ms), fast (70ms) or smooth (300ms); default from local cursor_mode"`

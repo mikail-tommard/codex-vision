@@ -445,6 +445,23 @@ func TestMouseActionBindsPolicyAuthorizedWindow(t *testing.T) {
 	}
 }
 
+func TestKeyboardAndScrollBindPolicyAuthorizedWindow(t *testing.T) {
+	for _, a := range []platform.Action{{Tool: "keyboard_type", Text: "test"}, {Tool: "keyboard_press", Keys: []string{"ENTER"}}, {Tool: "keyboard_hotkey", Keys: []string{"CTRL", "L"}}, {Tool: "mouse_scroll", Delta: 120}} {
+		t.Run(a.Tool, func(t *testing.T) {
+			c, d, l := setup(t)
+			c.LocalApproval = true
+			c.ConfirmEachAction = false
+			c.Allow = append(c.Allow, a.Tool)
+			if err := New(c, d, l).Execute(context.Background(), a); err != nil {
+				t.Fatal(err)
+			}
+			if len(d.Actions) != 1 || d.Actions[0].WindowID != "mock-window" {
+				t.Fatal("lost authorized window", d.Actions)
+			}
+		})
+	}
+}
+
 type signedCloneDesktop struct {
 	mock.Desktop
 	verified bool

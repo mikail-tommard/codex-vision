@@ -20,6 +20,17 @@ func nativeDoctor(request bool) error {
 		out["backend"] = d.Name()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		if diagnostic, ok := d.(interface {
+			Diagnostics(context.Context) (any, error)
+		}); ok {
+			detail, err := diagnostic.Diagnostics(ctx)
+			out["session"] = detail
+			if err != nil {
+				out["available"] = false
+				out["error"] = err.Error()
+				return json.NewEncoder(os.Stdout).Encode(out)
+			}
+		}
 		ms, err := d.Monitors(ctx)
 		out["available"] = err == nil
 		out["monitors"] = ms

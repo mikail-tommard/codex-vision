@@ -222,9 +222,9 @@ func (s *Session) Execute(ctx context.Context, a platform.Action) (err error) {
 	if err = ctx.Err(); err != nil {
 		return err
 	}
-	// Preserve the policy-authorized window throughout smooth approach and
-	// drag, even when the client omitted the optional expected window ID.
-	if a.Tool == "mouse_move" || a.Tool == "mouse_click" || a.Tool == "mouse_drag" {
+	// Preserve the policy-authorized window through every backend input,
+	// even when the client omitted the optional expected window ID.
+	if a.Tool != "app_launch" && a.Tool != "window_focus" {
 		a.WindowID = w.ID
 	}
 	return s.desk.Execute(ctx, a)

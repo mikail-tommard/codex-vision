@@ -30,26 +30,30 @@ type token struct {
 	Opaque  string
 }
 type Desktop struct {
-	runner   command.Runner
-	paths    map[string]string
-	mu       sync.Mutex
-	tokens   map[string]token
-	readlink func(string) (string, error)
-	session  string
+	runner      command.Runner
+	paths       map[string]string
+	mu          sync.Mutex
+	tokens      map[string]token
+	readlink    func(string) (string, error)
+	session     string
+	display     string
+	uid         int
+	heldButtons map[int]bool
+	heldKeys    []string
 }
 
 func New() (*Desktop, error) {
-	if os.Getenv("XDG_SESSION_TYPE") == "wayland" || os.Getenv("WAYLAND_DISPLAY") != "" {
+	if os.Getenv("XDG_SESSION_TYPE") == "wayland" || (os.Getenv("XDG_SESSION_TYPE") != "x11" && os.Getenv("WAYLAND_DISPLAY") != "") {
 		return nil, fmt.Errorf("Wayland desktop control requires a consent-based portal backend; XWayland is not a full desktop; use an X11 session")
 	}
 	display := os.Getenv("DISPLAY")
 	if display == "" {
 		return nil, fmt.Errorf("Linux X11 requires a local DISPLAY")
 	}
-	if !regexp.MustCompile(`^(unix)?:[0-9]+(\.[0-9]+)?$`).MatchString(display) {
+	if _, e := localDisplay(display); e != nil {
 		return nil, fmt.Errorf("remote X11 DISPLAY is disabled; use a local Unix display")
 	}
-	d := &Desktop{runner: command.Native{}, paths: map[string]string{}, tokens: map[string]token{}, readlink: os.Readlink, session: os.Getenv("XDG_SESSION_ID")}
+	d := &Desktop{runner: command.Native{}, paths: map[string]string{}, tokens: map[string]token{}, readlink: os.Readlink, session: os.Getenv("XDG_SESSION_ID"), display: display, uid: os.Getuid(), heldButtons: map[int]bool{}}
 	for _, name := range []string{"xrandr", "xprop", "xdotool", "import", "loginctl"} {
 		path, e := exec.LookPath(name)
 		if e != nil {
@@ -61,14 +65,18 @@ func New() (*Desktop, error) {
 		}
 		d.paths[name] = absolute
 	}
-	if !regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_-]*$`).MatchString(d.session) {
-		return nil, fmt.Errorf("Linux native backend requires XDG_SESSION_ID from a local logind desktop session")
+	if d.session != "" && !sessionIDRE.MatchString(d.session) {
+		return nil, fmt.Errorf("invalid XDG_SESSION_ID; launch from the local desktop session")
 	}
 	return d, nil
 }
 func (*Desktop) Name() string { return "linux-x11" }
 func (*Desktop) Supports(tool string) bool {
-	return tool == "mouse_move" || tool == "mouse_scroll" || tool == "window_focus"
+	switch tool {
+	case "mouse_move", "mouse_scroll", "window_focus", "mouse_click", "mouse_drag", "keyboard_type", "keyboard_press", "keyboard_hotkey":
+		return true
+	}
+	return false
 }
 func (d *Desktop) run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return d.runner.Run(ctx, d.paths[name], args...)
@@ -95,6 +103,12 @@ func parseMonitors(data []byte) ([]platform.Monitor, error) {
 	return ms, nil
 }
 func (d *Desktop) Monitors(ctx context.Context) ([]platform.Monitor, error) {
+	if err := d.unlocked(ctx); err != nil {
+		return nil, err
+	}
+	return d.monitors(ctx)
+}
+func (d *Desktop) monitors(ctx context.Context) ([]platform.Monitor, error) {
 	b, e := d.run(ctx, "xrandr", "--listmonitors")
 	if e != nil {
 		return nil, e
@@ -105,7 +119,7 @@ func (d *Desktop) Capture(ctx context.Context, r platform.Rect) (image.Image, er
 	if e := d.unlocked(ctx); e != nil {
 		return nil, e
 	}
-	ms, e := d.Monitors(ctx)
+	ms, e := d.monitors(ctx)
 	if e != nil {
 		return nil, e
 	}
@@ -144,7 +158,7 @@ func fields(data []byte) map[string]string {
 	for _, line := range strings.Split(string(data), "\n") {
 		a, b, ok := strings.Cut(line, "=")
 		if ok {
-			out[a] = b
+			out[strings.TrimSpace(a)] = strings.TrimSpace(b)
 		}
 	}
 	return out
@@ -235,96 +249,12 @@ func (d *Desktop) Active(ctx context.Context) (platform.Window, error) {
 	if e := d.unlocked(ctx); e != nil {
 		return platform.Window{}, e
 	}
+	return d.active(ctx)
+}
+func (d *Desktop) active(ctx context.Context) (platform.Window, error) {
 	data, e := d.run(ctx, "xdotool", "getactivewindow")
 	if e != nil {
 		return platform.Window{}, e
 	}
 	return d.describe(ctx, strings.TrimSpace(string(data)))
 }
-func (d *Desktop) unlocked(ctx context.Context) error {
-	b, e := d.run(ctx, "loginctl", "show-session", d.session, "-p", "LockedHint", "-p", "Active", "-p", "Remote", "-p", "Type", "-p", "Display")
-	if e != nil {
-		return e
-	}
-	f := fields(b)
-	if f["LockedHint"] != "no" || f["Active"] != "yes" || f["Remote"] != "no" || f["Type"] != "x11" {
-		return fmt.Errorf("logind must report a local active unlocked X11 session; input and screen reads refused")
-	}
-	configured := strings.TrimPrefix(os.Getenv("DISPLAY"), "unix")
-	if configured != "" && f["Display"] != configured {
-		return fmt.Errorf("logind display does not match DISPLAY; refusing access")
-	}
-	return nil
-}
-func (d *Desktop) Execute(ctx context.Context, a platform.Action) error {
-	if e := d.unlocked(ctx); e != nil {
-		return e
-	}
-	switch a.Tool {
-	case "mouse_move":
-		if a.Duration != 0 {
-			return fmt.Errorf("smooth mouse movement currently requires the macOS backend")
-		}
-		_, e := d.run(ctx, "xdotool", "mousemove", "--", strconv.Itoa(a.X), strconv.Itoa(a.Y))
-		return e
-	case "mouse_scroll":
-		if a.Delta == 0 || a.Delta%120 != 0 {
-			return fmt.Errorf("X11 scroll delta must be a nonzero multiple of 120")
-		}
-		point, e := d.run(ctx, "xdotool", "getmouselocation", "--shell")
-		if e != nil {
-			return e
-		}
-		active, e := d.run(ctx, "xdotool", "getactivewindow")
-		if e != nil {
-			return e
-		}
-		if fields(point)["WINDOW"] != strings.TrimSpace(string(active)) {
-			return fmt.Errorf("cursor must be directly above foreground X11 window")
-		}
-		button := 4
-		if a.Delta < 0 {
-			button = 5
-		}
-		if a.Horizontal {
-			button = 7
-			if a.Delta < 0 {
-				button = 6
-			}
-		}
-		count := a.Delta / 120
-		if count < 0 {
-			count = -count
-		}
-		if count > 10 {
-			return fmt.Errorf("scroll count exceeds limit")
-		}
-		_, e = d.run(ctx, "xdotool", "click", "--repeat", strconv.Itoa(count), "--delay", "0", strconv.Itoa(button))
-		return e
-	case "window_focus":
-		d.mu.Lock()
-		var target token
-		for _, t := range d.tokens {
-			if t.Opaque == a.WindowID {
-				target = t
-				break
-			}
-		}
-		d.mu.Unlock()
-		if target.Native == "" {
-			return fmt.Errorf("unknown window ID")
-		}
-		fresh, e := d.describe(ctx, target.Native)
-		if e != nil || fresh.ID != a.WindowID {
-			return fmt.Errorf("stale window identity")
-		}
-		if e = d.unlocked(ctx); e != nil {
-			return e
-		}
-		_, e = d.run(ctx, "xdotool", "windowactivate", "--sync", target.Native)
-		return e
-	default:
-		return fmt.Errorf("Linux input action requires unavailable trusted local approval")
-	}
-}
-func (*Desktop) Release() error { return nil }

@@ -1,0 +1,14 @@
+{
+  "tool_profile": "compact",
+  "mode": "assist",
+  "allow": ["window_focus", "mouse_move", "mouse_click", "mouse_drag", "mouse_scroll", "keyboard_type", "keyboard_press", "keyboard_hotkey"],
+  "allowed_processes": ["/usr/bin/gnome-text-editor"],
+  "timeout_ms": 30000,
+  "max_actions_per_minute": 120,
+  "max_actions_per_task": 1000,
+  "stop_file": "codex-vision.stop",
+  "audit_file": "codex-vision.audit.jsonl",
+  "images": true,
+  "local_approval": true,
+  "confirm_each_action": false
+}
