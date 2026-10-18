@@ -78,13 +78,22 @@ func recoveryResult(state recoveryState) *mcp.CallToolResult {
 }
 func inputTool(name string) bool {
 	switch name {
-	case "mouse_move", "mouse_click", "mouse_drag", "mouse_scroll", "keyboard_type", "keyboard_press", "keyboard_hotkey", "window_focus", "app_launch", "ui_fill", "ui_fill_batch", "mouse_action_wait", "desktop_batch":
+	case "mouse_move", "mouse_click", "mouse_drag", "mouse_scroll", "keyboard_type", "keyboard_press", "keyboard_hotkey", "window_focus", "app_launch", "ui_fill", "ui_fill_batch", "mouse_action_wait", "desktop_batch", "desktop_act":
 		return true
 	}
 	return false
 }
 func (v *Service) failureTarget(args any) string {
 	switch a := args.(type) {
+	case DesktopObserveArgs:
+		return a.WindowID
+	case DesktopActArgs:
+		v.views.mu.Lock()
+		defer v.views.mu.Unlock()
+		if v.views.current != nil && v.views.current.ID == a.ViewID {
+			return v.views.current.Window.ID
+		}
+		return ""
 	case DesktopBatchArgs:
 		return a.WindowID
 	case MouseActionWaitArgs:
@@ -134,6 +143,12 @@ func (v *Service) recordFailure(name string, args any, out *mcp.CallToolResult, 
 		return
 	}
 	if out != nil && out.IsError {
+		if meta, ok := out.StructuredContent.(map[string]any); ok {
+			if message, ok := meta["error"].(string); ok {
+				target, _ := meta["window_id"].(string)
+				v.recovery.failure(target, message)
+			}
+		}
 		if report, ok := out.StructuredContent.(*batchReport); ok {
 			for _, field := range report.Fields {
 				if field.Error != "" {
@@ -149,5 +164,6 @@ func (v *Service) sessionStatus() *mcp.CallToolResult {
 	executable, _ := os.Executable()
 	status["server"] = map[string]any{"version": serverVersion, "pid": os.Getpid(), "executable": executable, "started_at": v.started.UTC().Format(time.RFC3339)}
 	status["recovery"] = v.recovery.status()
+	status["metrics"] = v.metrics.snapshot()
 	return result(status)
 }

@@ -24,6 +24,15 @@ jobs:
           cache: true
       - run: go test ./...
       - run: go vet ./...
+      - name: Paired synthetic agent workflow evaluation
+        if: runner.os == 'Linux'
+        run: python3 scripts/evaluate.py --output evaluation-report.json
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: synthetic-agent-evaluation
+          path: evaluation-report.json
+          if-no-files-found: error
       - run: go build ./cmd/codex-vision
       - name: Race detector
         if: runner.os != 'Windows'

@@ -13,7 +13,9 @@ import (
 )
 
 func fail(err error) *mcp.CallToolResult {
-	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}
+	out := result(map[string]any{"error": err.Error(), "failure": classifyFailure(err)})
+	out.IsError = true
+	return out
 }
 func result(v any) *mcp.CallToolResult {
 	b, _ := json.Marshal(v)

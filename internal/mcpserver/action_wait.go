@@ -168,12 +168,13 @@ func (v *Service) mouseActionWait(ctx context.Context, a MouseActionWaitArgs) (*
 	}
 	out := v.observationResult(status, frame)
 	meta := out.StructuredContent.(map[string]any)
+	meta["window_id"] = w.ID
 	meta["interaction"] = interaction
 	meta["continuation"] = actionContinuation(interaction, frame != nil, actionErr)
 	meta["native_steps_completed"] = completed
 	if actionErr != nil {
 		meta["error"] = actionErr.Error()
-		v.recovery.failure(w.ID, actionErr.Error())
+		meta["failure"] = classifyFailure(actionErr)
 	}
 	updated := result(meta)
 	updated.Content = append(updated.Content, out.Content[1:]...)

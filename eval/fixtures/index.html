@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Codex Vision — Evaluation</title>
+<style>
+  body { font: 18px/1.5 system-ui,sans-serif; max-width: 740px; margin: 40px auto; padding: 0 24px; color: #172436; background: #f4f7fa }
+  section { padding: 24px; margin-block: 24px; border: 1px solid #bbc9d5; border-radius: 12px; background: white }
+  label { display: block; margin-block: 12px }
+  input,button { font: inherit; padding: 10px; border: 1px solid #677f94; border-radius: 6px }
+  input { display: block; width: min(90%,420px) }
+  button { background: #173f68; color: white; cursor: pointer }
+  button:disabled { opacity: .5 }
+  :focus-visible { outline: 3px solid #ce6200; outline-offset: 3px }
+  #clock { color: #456; font-variant-numeric: tabular-nums }
+</style>
+<main>
+<h1>Codex Vision evaluation fixture</h1>
+<p>Local test data only. This page makes no network requests and does not submit or store entered values.</p>
+<section aria-labelledby="form-title">
+<h2 id="form-title">Form</h2>
+<form id="form">
+<label>Name<input name="name" autocomplete="off"></label>
+<label>Email<input name="email" type="email" autocomplete="off"></label>
+<label>City<input name="city" autocomplete="off"></label>
+<button type="submit">Save form</button>
+<p id="saved" role="status">Not saved</p>
+</form>
+</section>
+<section aria-labelledby="turn-title">
+<h2 id="turn-title">Turn-based UI simulation</h2>
+<p id="clock"></p>
+<p>Opponent: <strong id="opponent">Alpha</strong></p>
+<button id="turn">Next turn</button>
+<p id="turn-state" role="status">Ready</p>
+</section>
+<section aria-labelledby="dialog-title">
+<h2 id="dialog-title">Dialog</h2>
+<button id="open-dialog">Show dialog</button>
+</section>
+<dialog id="dialog"><h2>Test dialog</h2><p>This is a local test dialog.</p><button id="close-dialog">Close dialog</button></dialog>
+</main>
+<script>
+  let turns = 0;
+  document.getElementById('form').addEventListener('submit', event => {
+    event.preventDefault();
+    document.getElementById('saved').textContent = 'Saved locally for this test';
+    document.title = 'Codex Vision — Form saved';
+  });
+  const button = document.getElementById('turn');
+  button.addEventListener('click', () => {
+    button.disabled = true;
+    document.getElementById('turn-state').textContent = 'Waiting';
+    setTimeout(() => {
+      turns++;
+      document.getElementById('opponent').textContent = turns % 2 ? 'Beta' : 'Alpha';
+      document.getElementById('turn-state').textContent = 'Ready';
+      document.title = `Codex Vision — Turn ready ${turns}`;
+      button.disabled = false;
+    }, 700);
+  });
+  setInterval(() => { document.getElementById('clock').textContent = `Unrelated clock: ${new Date().toLocaleTimeString()}`; }, 1000);
+  const dialog = document.getElementById('dialog');
+  document.getElementById('open-dialog').addEventListener('click', () => dialog.showModal());
+  document.getElementById('close-dialog').addEventListener('click', () => dialog.close());
+</script>
+</html>

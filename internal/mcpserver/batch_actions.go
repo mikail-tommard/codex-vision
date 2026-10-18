@@ -11,6 +11,7 @@ import (
 )
 
 type DesktopStep struct {
+	TargetID   string   `json:"target_id,omitempty" jsonschema:"desktop_act only: short-lived control ID from desktop_observe; do not combine with x/y"`
 	Action     string   `json:"action" jsonschema:"click, move, scroll, press, hotkey or type. Only batch predictable steps; do not guess targets after navigation"`
 	X          int      `json:"x,omitempty"`
 	Y          int      `json:"y,omitempty"`
@@ -21,6 +22,7 @@ type DesktopStep struct {
 	Text       string   `json:"text,omitempty"`
 }
 type DesktopBatchArgs struct {
+	Expect         *ExpectedState `json:"expect,omitempty" jsonschema:"Optional exact native UI postcondition; mutually exclusive with ready_when"`
 	WaitFor        string         `json:"wait_for,omitempty" jsonschema:"change (default) for navigation; response for a stable own change followed by another stable change. AX ready_when takes precedence. Visual changes do not prove an opponent response"`
 	ResultMode     string         `json:"result_mode,omitempty" jsonschema:"auto (default): text on confirmed AX readiness, otherwise image. image: always inspect final visual state. Use image when the next decision needs new visual information, e.g. games"`
 	ReadyWhen      *ReadyWhen     `json:"ready_when,omitempty" jsonschema:"Optional AX predicate: observe ready to busy to ready after the batch, then return one result; configure using ui_controls"`
@@ -38,7 +40,13 @@ func (v *Service) registerDesktopBatch(s *mcp.Server) {
 	bind(s, v, "desktop_batch", "Economical default for predictable website actions: click/move/scroll/press/hotkey/type in one confirmed window, then local AX ready_when cycle (when configured) or wait_for=response for two visual phases; one final result. result_mode=auto returns text for confirmed AX readiness, otherwise at most ONE watch-region image. Use result_mode=image when new visual information is needed. Configure attention once. Timeout returns metadata only by default; do not repeat snapshots of a stuck page. No implicit Enter, retries or rollback; inspect completed_steps and may_have_changed after failure. Separate batches whenever a later target depends on new visual information. For semantic fields prefer ui_fill_batch.", false, v.desktopBatch)
 }
 func (v *Service) desktopBatch(ctx context.Context, a DesktopBatchArgs) (*mcp.CallToolResult, error) {
+	return v.runDesktopBatch(ctx, a, nil)
+}
+func (v *Service) runDesktopBatch(ctx context.Context, a DesktopBatchArgs, beforeStep func(context.Context, int) error) (*mcp.CallToolResult, error) {
 	toolStarted := time.Now()
+	if a.Expect != nil && a.ReadyWhen != nil {
+		return nil, fmt.Errorf("choose expect or ready_when")
+	}
 	if a.WaitFor == "" {
 		a.WaitFor = "change"
 	}
@@ -78,8 +86,10 @@ func (v *Service) desktopBatch(ctx context.Context, a DesktopBatchArgs) (*mcp.Ca
 		return nil, e
 	}
 	if a.WatchRegion != nil {
+		if region == nil || *region != *a.WatchRegion {
+			ready = nil
+		}
 		region = a.WatchRegion
-		ready = nil
 	} else if pinned != nil && (pinned.ID != w.ID || pinned.Process != w.Process || pinned.Bounds != w.Bounds) {
 		return nil, fmt.Errorf("pinned window changed; inspect and reselect watch_region")
 	}
@@ -105,6 +115,9 @@ func (v *Service) desktopBatch(ctx context.Context, a DesktopBatchArgs) (*mcp.Ca
 	steps := make([]platform.Action, 0, len(a.Steps))
 	textBytes := 0
 	for i, step := range a.Steps {
+		if step.TargetID != "" {
+			return nil, fmt.Errorf("target_id requires desktop_act and a fresh view_id")
+		}
 		act := platform.Action{WindowID: w.ID, Motion: a.Motion, X: step.X, Y: step.Y}
 		switch step.Action {
 		case "click":
@@ -181,9 +194,16 @@ func (v *Service) desktopBatch(ctx context.Context, a DesktopBatchArgs) (*mcp.Ca
 	if err != nil {
 		return nil, err
 	}
+	expected, err := v.prepareExpectation(ctx, w, a.Expect, time.Duration(a.SettleMS)*time.Millisecond)
+	if err != nil {
+		return nil, err
+	}
 	var readyCheck func(context.Context) (bool, error)
 	if guard != nil && guard.report.Mode == "ax_ready" {
 		readyCheck = guard.observe
+	}
+	if expected != nil {
+		readyCheck = expected.observe
 	}
 	completed := 0
 	preflightMS := time.Since(toolStarted).Milliseconds()
@@ -191,9 +211,14 @@ func (v *Service) desktopBatch(ctx context.Context, a DesktopBatchArgs) (*mcp.Ca
 	var pointerMS int64
 	pointerSteps := 0
 	interaction, status, frame, err := v.Observer.ActAndWait(ctx, a.ID, observation.ActionWaitOptions{Settle: time.Duration(a.SettleMS) * time.Millisecond, Wait: time.Duration(a.WaitMS) * time.Millisecond, Ready: readyCheck, SingleChange: a.WaitFor == "change", MetadataOnReady: a.ResultMode == "auto", SuppressTimeoutImage: !a.ImageOnTimeout}, func(ctx context.Context) error {
-		for _, step := range steps {
+		for index, step := range steps {
 			if e := check(ctx); e != nil {
 				return e
+			}
+			if beforeStep != nil {
+				if e := beforeStep(ctx, index); e != nil {
+					return e
+				}
 			}
 			started := time.Now()
 			eventResult, e := v.action(ctx, step)
@@ -227,20 +252,35 @@ func (v *Service) desktopBatch(ctx context.Context, a DesktopBatchArgs) (*mcp.Ca
 			frame = nil
 		}
 	}
+	if err != nil && completed > 0 {
+		interaction.MayHaveChanged = true
+		if completed == len(steps) {
+			interaction.Posted = true
+			interaction.Stage = "post_input_check_failed"
+		}
+	}
 	out := v.observationResult(status, frame)
 	meta := out.StructuredContent.(map[string]any)
+	meta["window_id"] = w.ID
 	meta["interaction"] = interaction
 	meta["continuation"] = actionContinuation(interaction, frame != nil, err)
 	meta["completed_steps"] = completed
+	if expected != nil {
+		meta["verification"] = expected.report
+	} else {
+		meta["verification"] = verificationReport{Scope: "not configured; visual changes or readiness alone do not verify application outcome"}
+	}
 	meta["timings"] = map[string]any{"cursor_path_ms": pointerMS, "measured_pointer_steps": pointerSteps, "preflight_ms": preflightMS, "step_ms": stepMS, "tool_ms": time.Since(toolStarted).Milliseconds(), "note": "local server only; step time includes permission and window checks, not model/network time"}
-	if guard != nil {
+	if expected != nil {
+		meta["readiness"] = readinessReport{Mode: "expected_state", Matched: expected.report.Matched}
+	} else if guard != nil {
 		meta["readiness"] = guard.report
 	} else {
 		meta["readiness"] = readinessReport{Mode: "visual", Reason: "no AX predicate configured"}
 	}
 	if err != nil {
 		meta["error"] = err.Error()
-		v.recovery.failure(w.ID, err.Error())
+		meta["failure"] = classifyFailure(err)
 	}
 	updated := result(meta)
 	updated.Content = append(updated.Content, out.Content[1:]...)

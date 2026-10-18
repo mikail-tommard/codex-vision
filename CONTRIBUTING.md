@@ -14,6 +14,7 @@
 go test ./...
 go vet ./...
 python3 -m unittest discover -s scripts -p 'test_*.py'
+python3 scripts/evaluate.py --output evaluation-report.json
 ```
 
 Проверку гонок запускайте отдельно:

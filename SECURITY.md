@@ -57,3 +57,16 @@ There is no general shell tool, hidden persistence, startup service, credential-
 ## Reporting a vulnerability
 
 Do not post credentials, private screenshots, audit files or working configs in public issues. Use the repository's private vulnerability reporting facility if enabled, or establish a private channel with the maintainer. For ordinary bugs, provide a minimal redacted reproduction, OS/architecture and `session_status.server.version`.
+
+
+## Unified agent workflow (0.11.0)
+
+`desktop_observe` pins the active window and returns a bounded structural view plus at most one delivered image. It is not an atomic application snapshot and does not authorize input. Control discovery is capped; unknown/truncated AX metadata does not issue actionable references. Existing field-value and secure-field restrictions remain.
+
+`desktop_act` requires a current unexpired view bound to the same observation, attention revision, process and window geometry. A target_id is a short-lived structural reference, not an opaque native AX object identity. Before each targeted step it must uniquely match a fresh complete control read by label, role, enabled state and original bounds. Coordinates may be transformed only from the image actually delivered with that view. Existing per-event authorization remains in force. Same-user UI races are not eliminated.
+
+A different foreground window permits at most one separately authorized preflight focus attempt for that view; it does not bypass the recovery guard, OS restrictions or process allowlists. A consumed or partial batch cannot be replayed. Success can return a new view with the already-delivered result, without a second capture. Timeouts and partial failures do not issue a new actionable view.
+
+Explicit native UI expectations are bounded structural checks: a title substring or complete, unambiguous control state. By default an already-satisfied condition refuses input; disabling require_transition weakens the predicate and is reported. A matching UI condition is not verification of application business state, a file, a shell command or an opponent move. Expected-state checks have no visual fallback pretending to be equivalent proof.
+
+Failure classifications and continuation are advisory only. They do not change policy or automatically replay input. Process-local metrics count calls, results and local elapsed time without storing screenshots, field values or typed content; they do not measure actual human intervention or provider token usage. Synthetic evaluations are labelled and cannot substitute for real GUI testing.

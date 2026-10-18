@@ -32,3 +32,5 @@ __pycache__/
 /CODEX_VISION_PROMPT.md
 /relocate_freecad.py
 /freecad/
+
+/evaluation-report.json

@@ -58,7 +58,7 @@ func TestRealStdioProcess(t *testing.T) {
 	}
 	defer session.Close()
 	tools, e := session.ListTools(ctx, nil)
-	if e != nil || len(tools.Tools) != 27 {
+	if e != nil || len(tools.Tools) != 29 {
 		t.Fatal(e)
 	}
 	r, e := session.CallTool(ctx, &mcp.CallToolParams{Name: "screen_capture", Arguments: map[string]any{"monitor_id": "mock-primary", "max_width": 160}})
@@ -72,6 +72,22 @@ func TestRealStdioProcess(t *testing.T) {
 	decoded, _, e := image.Decode(bytes.NewReader(im.Data))
 	if e != nil || decoded.Bounds().Dx() != 160 {
 		t.Fatal(e)
+	}
+	r, e = session.CallTool(ctx, &mcp.CallToolParams{Name: "desktop_observe", Arguments: map[string]any{}})
+	if e != nil || r.IsError || len(r.Content) != 2 {
+		t.Fatal("unified stdio observation failed", e, r)
+	}
+	var unified struct {
+		View struct {
+			ID string `json:"view_id"`
+		} `json:"view"`
+	}
+	if e = json.Unmarshal([]byte(r.Content[0].(*mcp.TextContent).Text), &unified); e != nil || unified.View.ID == "" {
+		t.Fatal("missing unified view", e)
+	}
+	r, e = session.CallTool(ctx, &mcp.CallToolParams{Name: "desktop_act", Arguments: map[string]any{"view_id": unified.View.ID, "steps": []map[string]any{{"action": "click", "x": 20, "y": 20}}, "wait_ms": 500}})
+	if e != nil || !r.IsError || !bytes.Contains([]byte(r.Content[0].(*mcp.TextContent).Text), []byte("access_denied")) {
+		t.Fatal("unified tool bypassed observe policy", e, r)
 	}
 	r, e = session.CallTool(ctx, &mcp.CallToolParams{Name: "mouse_move", Arguments: map[string]any{"x": 1, "y": 1}})
 	if e != nil || !r.IsError {

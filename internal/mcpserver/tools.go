@@ -95,7 +95,7 @@ func bind[T any](s *mcp.Server, svc *Service, name, desc string, read bool, fn f
 			}
 		}
 	}
-	if name == "desktop_batch" {
+	if name == "desktop_batch" || name == "desktop_act" {
 		schema.Properties["steps"].MinItems = ptr(1)
 		schema.Properties["steps"].MaxItems = ptr(12)
 		for _, def := range schema.Defs {
@@ -114,7 +114,7 @@ func bind[T any](s *mcp.Server, svc *Service, name, desc string, read bool, fn f
 	if name == "mouse_move" {
 		schema.Properties["duration_ms"].Minimum = ptr(0.0)
 	}
-	mcp.AddTool(s, &mcp.Tool{Name: name, Description: desc, InputSchema: schema, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: read && name != "observation_start"}}, func(ctx context.Context, _ *mcp.CallToolRequest, a T) (out *mcp.CallToolResult, _ any, _ error) {
+	mcp.AddTool(s, &mcp.Tool{Name: name, Description: desc, InputSchema: schema, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: read && name != "observation_start" && name != "desktop_observe"}}, func(ctx context.Context, _ *mcp.CallToolRequest, a T) (out *mcp.CallToolResult, _ any, _ error) {
 		defer func() {
 			if recover() != nil {
 				svc.Close()
@@ -122,6 +122,8 @@ func bind[T any](s *mcp.Server, svc *Service, name, desc string, read bool, fn f
 				out = fail(fmt.Errorf("internal failure; input disabled; restart locally"))
 			}
 		}()
+		started := time.Now()
+		defer func() { svc.metrics.record(name, out, time.Since(started)) }()
 		ctx, cancel := context.WithTimeout(ctx, time.Duration(svc.Config.TimeoutMS)*time.Millisecond)
 		defer cancel()
 		release, lockErr := svc.lockTool(ctx, name)
@@ -131,11 +133,11 @@ func bind[T any](s *mcp.Server, svc *Service, name, desc string, read bool, fn f
 		defer release()
 		svc.Observer.Touch()
 		recovery := svc.recovery.status()
-		if recovery.Required && (inputTool(name) || name == "observation_next" || name == "observation_start") {
+		if recovery.Required && (inputTool(name) || name == "observation_next" || name == "observation_start" || name == "desktop_observe") {
 			return recoveryResult(recovery), nil, nil
 		}
 		var err error
-		if read && (name == "observation_next" || name == "ui_wait") {
+		if read && (name == "observation_next" || name == "ui_wait" || name == "desktop_observe") {
 			err = svc.chargeRead()
 			if err == nil {
 				out, err = fn(ctx, a)

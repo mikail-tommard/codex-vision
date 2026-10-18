@@ -21,6 +21,6 @@ func actionContinuation(r observation.ActionWaitResult, image bool, err error) m
 		"repeat_action":                false,
 		"immediate_observation_needed": false,
 		"visual_state_included":        image,
-		"scope":                        "control readiness only when text; visual changes do not verify application semantics",
+		"scope":                        "explicit native UI predicate only when text; visual changes do not verify application semantics",
 	}
 }
