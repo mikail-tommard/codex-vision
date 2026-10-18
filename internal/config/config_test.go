@@ -7,7 +7,7 @@ import (
 )
 
 func TestStrictConfig(t *testing.T) {
-	for _, data := range []string{`{"mode":"auto"}`, `{"mode":"assist"}`, `{"allow":["keyboard_type"]}`, `{"timeout_ms":0}`, `{"images":false,"unknown":1}`, `{} {}`, `null`} {
+	for _, data := range []string{`{"tool_profile":"unknown"}`, `{"mode":"auto"}`, `{"mode":"assist"}`, `{"allow":["keyboard_type"]}`, `{"timeout_ms":0}`, `{"images":false,"unknown":1}`, `{} {}`, `null`} {
 		t.Run(data, func(t *testing.T) {
 			p := filepath.Join(t.TempDir(), "config.json")
 			if e := os.WriteFile(p, []byte(data), 0600); e != nil {
@@ -20,7 +20,7 @@ func TestStrictConfig(t *testing.T) {
 		})
 	}
 	c, e := Load("")
-	if e != nil || c.Mode != "observe" {
+	if e != nil || c.Mode != "observe" || c.ToolProfile != "compact" {
 		t.Fatal(c, e)
 	}
 }

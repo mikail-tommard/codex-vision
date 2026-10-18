@@ -9,6 +9,7 @@ import (
 )
 
 type Config struct {
+	ToolProfile       string   `json:"tool_profile"`
 	CursorMode        string   `json:"cursor_mode"`
 	Mode              string   `json:"mode"`
 	Allow             []string `json:"allow"`
@@ -24,7 +25,7 @@ type Config struct {
 }
 
 func Default() Config {
-	return Config{CursorMode: "smooth", Mode: "observe", Allow: []string{}, AllowedProcesses: []string{}, TimeoutMS: 5000, MaxPerMinute: 30, MaxPerTask: 100, StopFile: "codex-vision.stop", AuditFile: "codex-vision.audit.jsonl", Images: true, ConfirmEachAction: true}
+	return Config{ToolProfile: "compact", CursorMode: "smooth", Mode: "observe", Allow: []string{}, AllowedProcesses: []string{}, TimeoutMS: 5000, MaxPerMinute: 30, MaxPerTask: 100, StopFile: "codex-vision.stop", AuditFile: "codex-vision.audit.jsonl", Images: true, ConfirmEachAction: true}
 }
 func Load(path string) (Config, error) {
 	c := Default()
@@ -59,6 +60,9 @@ func Load(path string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	if c.ToolProfile != "" && c.ToolProfile != "compact" && c.ToolProfile != "full" {
+		return fmt.Errorf("tool_profile must be compact or full")
+	}
 	if c.CursorMode != "" && c.CursorMode != "smooth" && c.CursorMode != "fast" && c.CursorMode != "rapid" {
 		return fmt.Errorf("cursor_mode must be rapid, fast or smooth")
 	}

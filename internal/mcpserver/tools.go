@@ -77,6 +77,9 @@ type FocusArgs struct {
 }
 
 func bind[T any](s *mcp.Server, svc *Service, name, desc string, read bool, fn func(context.Context, T) (*mcp.CallToolResult, error)) {
+	if svc.Config.ToolProfile == "compact" && !compactTool(name) {
+		return
+	}
 	schema, err := jsonschema.For[T](nil)
 	if err != nil {
 		panic(err)
@@ -115,6 +118,15 @@ func bind[T any](s *mcp.Server, svc *Service, name, desc string, read bool, fn f
 		schema.Properties["duration_ms"].Minimum = ptr(0.0)
 	}
 	mcp.AddTool(s, &mcp.Tool{Name: name, Description: desc, InputSchema: schema, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: read && name != "observation_start" && name != "desktop_observe"}}, func(ctx context.Context, _ *mcp.CallToolRequest, a T) (out *mcp.CallToolResult, _ any, _ error) {
+		// Internal handlers use structured metadata. Compact wire responses keep
+		// only its JSON text copy, retaining images and legacy text compatibility.
+		defer func() {
+			if svc.Config.ToolProfile == "compact" && out != nil {
+				copy := *out
+				copy.StructuredContent = nil
+				out = &copy
+			}
+		}()
 		defer func() {
 			if recover() != nil {
 				svc.Close()

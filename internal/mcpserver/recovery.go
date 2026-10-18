@@ -162,7 +162,7 @@ func (v *Service) recordFailure(name string, args any, out *mcp.CallToolResult, 
 func (v *Service) sessionStatus() *mcp.CallToolResult {
 	status := v.Session.Status()
 	executable, _ := os.Executable()
-	status["server"] = map[string]any{"version": serverVersion, "pid": os.Getpid(), "executable": executable, "started_at": v.started.UTC().Format(time.RFC3339)}
+	status["server"] = map[string]any{"version": serverVersion, "pid": os.Getpid(), "executable": executable, "started_at": v.started.UTC().Format(time.RFC3339), "tool_profile": v.Config.ToolProfile}
 	status["recovery"] = v.recovery.status()
 	status["metrics"] = v.metrics.snapshot()
 	return result(status)

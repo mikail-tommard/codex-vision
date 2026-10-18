@@ -24,6 +24,12 @@ func connect(t *testing.T, c config.Config) (*mcp.ClientSession, *Service) {
 
 func connectDesktop(t *testing.T, c config.Config, d platform.Desktop) (*mcp.ClientSession, *Service) {
 	t.Helper()
+	return connectProfileDesktop(t, c, d, "full")
+}
+
+func connectProfileDesktop(t *testing.T, c config.Config, d platform.Desktop, profile string) (*mcp.ClientSession, *Service) {
+	t.Helper()
+	c.ToolProfile = profile
 	c.StopFile = filepath.Join(t.TempDir(), "stop")
 	server, svc := New(c, d, slog.New(slog.NewJSONHandler(io.Discard, nil)))
 	t.Cleanup(svc.Close)

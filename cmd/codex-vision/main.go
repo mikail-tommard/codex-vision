@@ -16,6 +16,7 @@ import (
 
 func run() error {
 	path := flag.String("config", "", "local JSON configuration (defaults to observe)")
+	profile := flag.String("tool-profile", "", "MCP catalog: compact (default) or full; overrides config")
 	sim := flag.Bool("mock", false, "synthetic desktop; never controls host")
 	doctor := flag.Bool("doctor", false, "report native platform permissions and availability (JSON; no MCP session)")
 	request := flag.Bool("request-permissions", false, "request OS privacy permissions locally, report status, then exit")
@@ -26,6 +27,12 @@ func run() error {
 	c, e := config.Load(*path)
 	if e != nil {
 		return e
+	}
+	if *profile != "" {
+		c.ToolProfile = *profile
+		if e := c.Validate(); e != nil {
+			return e
+		}
 	}
 	f, e := os.OpenFile(c.AuditFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if e != nil {

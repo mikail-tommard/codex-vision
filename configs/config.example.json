@@ -1,4 +1,5 @@
 {
+  "tool_profile": "compact",
   "mode": "observe",
   "allow": [],
   "allowed_processes": [],

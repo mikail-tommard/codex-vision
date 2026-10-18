@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const serverVersion = "0.11.0"
+const serverVersion = "0.12.0"
 
 type Service struct {
 	views    agentViews
@@ -35,6 +35,9 @@ type Service struct {
 }
 
 func New(c config.Config, d platform.Desktop, l *slog.Logger) (*mcp.Server, *Service) {
+	if c.ToolProfile == "" {
+		c.ToolProfile = "compact"
+	}
 	svc := &Service{started: time.Now(), Desktop: d, Config: c, Session: safety.New(c, d, l), Log: l, uiOps: make(chan struct{}, 1), inputs: make(chan struct{}, 1), reads: make(chan struct{}, 1)}
 	svc.Observer = observation.New(nil, svc.Session.ObservationError)
 	s := mcp.NewServer(&mcp.Implementation{Name: "codex-vision", Version: serverVersion}, &mcp.ServerOptions{Instructions: agentInstructions})

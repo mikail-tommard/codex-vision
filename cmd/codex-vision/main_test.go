@@ -38,6 +38,7 @@ func TestStdioHelper(t *testing.T) {
 func TestRealStdioProcess(t *testing.T) {
 	dir := t.TempDir()
 	c := config.Default()
+	c.ToolProfile = "compact" // CLI override below must retain the legacy contract.
 	c.AuditFile = filepath.Join(dir, "audit.jsonl")
 	c.StopFile = filepath.Join(dir, "stop")
 	cfg := filepath.Join(dir, "config.json")
@@ -47,7 +48,7 @@ func TestRealStdioProcess(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestStdioHelper$", "--", "--mock", "--config", cfg)
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestStdioHelper$", "--", "--mock", "--config", cfg, "--tool-profile", "full")
 	cmd.Env = append(os.Environ(), "CODEX_VISION_TEST_HELPER=1")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
