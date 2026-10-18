@@ -301,7 +301,7 @@ func (v *Service) register(s *mcp.Server) {
 		return v.action(ctx, platform.Action{Tool: "window_focus", WindowID: a.WindowID})
 	})
 	bind(s, v, "session_status", "Local mode, effective input permissions, budget and stop status.", false, func(_ context.Context, _ Empty) (*mcp.CallToolResult, error) { return v.sessionStatus(), nil })
-	bind(s, v, "session_stop", "Latch input disabled, cancel active action and stop observation. Only local restart can reset.", false, func(_ context.Context, _ Empty) (*mcp.CallToolResult, error) {
+	bind(s, v, "session_stop", "Emergency stop only: latch all input disabled, cancel active action and stop observation. Requires local operator restart; never use for routine task cleanup, pausing or ending a turn. To stop capture while keeping input usable, use observation_control action=stop.", false, func(_ context.Context, _ Empty) (*mcp.CallToolResult, error) {
 		v.Close()
 		return v.sessionStatus(), nil
 	})

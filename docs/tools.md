@@ -16,7 +16,7 @@
 | Инструмент | Назначение |
 | --- | --- |
 | `session_status` | Версия и PID сервера, режим, доступные действия, бюджет и stop |
-| `session_stop` | Отменить активную операцию и запретить дальнейший ввод |
+| `session_stop` | Аварийно отменить операцию и заблокировать ввод до локального перезапуска. Для обычного завершения наблюдения использовать `observation_control action=stop` |
 | `screen_list_monitors` | Мониторы, границы и система координат backend |
 | `screen_capture` | Полный desktop или монитор; `monitor_id`, `format`, `quality`, `max_width` |
 | `screen_region` | Фрагмент по `x`, `y`, `width`, `height` в координатах desktop |
