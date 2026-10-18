@@ -1,0 +1,11 @@
+{
+  "mode": "observe",
+  "allow": [],
+  "allowed_processes": [],
+  "timeout_ms": 5000,
+  "max_actions_per_minute": 30,
+  "max_actions_per_task": 100,
+  "stop_file": "codex-vision.stop",
+  "audit_file": "codex-vision.audit.jsonl",
+  "images": true
+}

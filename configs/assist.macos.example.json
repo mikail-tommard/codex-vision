@@ -1,0 +1,14 @@
+{
+  "mode": "assist",
+  "cursor_mode": "fast",
+  "allow": ["window_focus", "app_launch", "mouse_move", "mouse_click", "mouse_drag", "mouse_scroll", "keyboard_type", "keyboard_press", "keyboard_hotkey", "ui_fill"],
+  "allowed_processes": ["/System/Applications/TextEdit.app/Contents/MacOS/TextEdit"],
+  "timeout_ms": 30000,
+  "max_actions_per_minute": 120,
+  "max_actions_per_task": 1000,
+  "stop_file": "codex-vision.stop",
+  "audit_file": "codex-vision.audit.jsonl",
+  "images": true,
+  "local_approval": true,
+  "confirm_each_action": true
+}

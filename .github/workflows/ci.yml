@@ -1,0 +1,45 @@
+name: test
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  registration-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m unittest discover -s scripts -p 'test_*.py'
+  portable:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test ./...
+      - run: go vet ./...
+      - run: go build ./cmd/codex-vision
+      - name: Race detector
+        if: runner.os != 'Windows'
+        run: go test -race ./...
+      - name: Windows and Linux release builds
+        if: runner.os == 'Linux'
+        run: ./scripts/build-all.sh
+      - name: macOS Intel and Apple Silicon builds
+        if: runner.os == 'macOS'
+        run: |
+          ./scripts/build.sh darwin amd64
+          ./scripts/build.sh darwin arm64
+      - uses: actions/upload-artifact@v4
+        if: runner.os != 'Windows'
+        with:
+          name: native-binaries-${{ runner.os }}
+          path: bin/codex-vision-*
+          if-no-files-found: error
+# Interactive capture/input tests require a real unlocked desktop and are intentionally opt-in.

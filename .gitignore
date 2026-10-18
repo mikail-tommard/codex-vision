@@ -1,0 +1,34 @@
+# Build artifacts
+/bin/
+/codex-vision
+/codex-vision.exe
+/coverage.out
+*.test
+
+# Local configuration and runtime state
+/config.json
+/configs/*.local.json
+*.audit.jsonl
+*.stop
+.env
+.env.*
+!.env.example
+
+# OS, editors and Python caches
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+/.codex/
+/.agents/
+/.aws/
+__pycache__/
+*.py[cod]
+
+# Local browser artifacts and development history
+.playwright-mcp/
+*.local-history.md
+/VALIDATION.md
+/CODEX_VISION_PROMPT.md
+/relocate_freecad.py
+/freecad/

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Codex Vision · Наблюдение</title>
+<link rel="stylesheet" href="style.css">
+<script defer src="app.js"></script>
+</head>
+<body>
+<main>
+<header>
+<div>
+<p class="eyebrow">CODEX VISION / LOCAL</p>
+<h1>Наблюдение за экраном</h1>
+</div>
+<span id="state" role="status">Подключение…</span>
+</header>
+<section class="screen" aria-label="Текущий экран">
+<img alt="Локальная трансляция экрана">
+<p id="notice" role="status"></p>
+</section>
+<section class="toolbar" aria-label="Управление наблюдением">
+<div>
+<strong id="mode">—</strong>
+<p id="stats">Получение состояния…</p>
+</div>
+<div class="buttons">
+<button id="pause" disabled>Пауза</button>
+<button id="stop" disabled>Остановить</button>
+</div>
+</section>
+<footer>Изображение передаётся локально. Модель получает кадры по запросу агента. Звук и история не записываются.</footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,7 @@
+{
+  "mode": "assist",
+  "allow": ["mouse_move", "mouse_scroll", "window_focus"],
+  "allowed_processes": ["mock.exe"],
+  "stop_file": "codex-vision.mock.stop",
+  "audit_file": "codex-vision.mock.audit.jsonl"
+}
