@@ -14,6 +14,7 @@
 #include "json_bool.h"
 #include "focus_resolver.h"
 #include "window_match.h"
+#include "scroll_target.h"
 
 static char *json(id obj) {
  NSError *err=nil; NSData *data=[NSJSONSerialization dataWithJSONObject:obj options:0 error:&err];
@@ -204,17 +205,50 @@ Class manager=NSClassFromString(@"SCScreenshotManager");SEL captureSelector=NSSe
  if(data.length>134217728)return fail(error,@"encoded image exceeds memory budget");
  *bytes=malloc(data.length);if(!*bytes)return fail(error,@"out of memory");memcpy(*bytes,data.bytes,data.length);*length=data.length;return 1;
 }}
-int cv_event(int kind,double x,double y,int delta,int horizontal,char **error) { @autoreleasepool {
+// Defined below with the structural AX helpers; no field values are read.
+static id uiAttribute(AXUIElementRef element,CFStringRef name);
+static CGRect uiBounds(AXUIElementRef element);
+static cv_focus_rect scrollRect(CGRect r){return (cv_focus_rect){r.origin.x,r.origin.y,r.size.width,r.size.height};}
+static BOOL scrollAXHit(CGPoint point,pid_t front,cv_focus_rect *bounds) {
+ AXUIElementRef system=AXUIElementCreateSystemWide(),hit=NULL;
+ if(!system)return NO;
+ AXUIElementSetMessagingTimeout(system,0.15);
+ AXError status=AXUIElementCopyElementAtPosition(system,(float)point.x,(float)point.y,&hit);CFRelease(system);
+ if(status!=kAXErrorSuccess||!hit){if(hit)CFRelease(hit);return NO;}
+ pid_t owner=0;if(AXUIElementGetPid(hit,&owner)!=kAXErrorSuccess||owner!=front){CFRelease(hit);return NO;}
+ id window=uiAttribute(hit,kAXWindowAttribute);
+ AXUIElementRef target=NULL;
+ if(window&&CFGetTypeID((__bridge CFTypeRef)window)==AXUIElementGetTypeID())target=(__bridge AXUIElementRef)window;
+ else if([uiAttribute(hit,kAXRoleAttribute) isEqual:(__bridge NSString*)kAXWindowRole])target=hit;
+ BOOL valid=target&&AXUIElementGetPid(target,&owner)==kAXErrorSuccess&&owner==front;
+ if(valid){*bounds=scrollRect(uiBounds(target));valid=cv_scroll_rect_valid(*bounds);}
+ CFRelease(hit);return valid;
+}
+int cv_event(int kind,double x,double y,int delta,int horizontal,uint32_t expectedWindow,int expectedPID,char **error) { @autoreleasepool {
  if(!requireAccessibility(error,1))return 0;
  CGEventRef event=NULL;
  if(kind==1)event=CGEventCreateMouseEvent(NULL,kCGEventMouseMoved,CGPointMake(x,y),kCGMouseButtonLeft);
  else if(kind==2){
  CGEventRef current=CGEventCreate(NULL);if(!current)return fail(error,@"cannot read cursor position");CGPoint point=CGEventGetLocation(current);CFRelease(current);
- pid_t front=0;CGRect focused; if(!focusedWindow(&front,&focused,error))return 0;BOOL matches=NO;
- for(NSDictionary *w in windowInfo()){CGRect bounds;if(!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)w[(__bridge NSString*)kCGWindowBounds],&bounds))continue;if(!CGRectContainsPoint(bounds,point))continue;
- matches=[w[(__bridge NSString*)kCGWindowLayer]intValue]==0&&[w[(__bridge NSString*)kCGWindowOwnerPID]intValue]==front;break;}
- if(!matches)return fail(error,@"scroll requires cursor above the foreground application window");
+ pid_t front=0;CGRect focused; if(!focusedWindow(&front,&focused,error))return 0;
+ if(!expectedWindow||front!=expectedPID)return fail(error,@"scroll foreground differs from the requested window process; stop input");
+ cv_focus_rect focus=scrollRect(focused),hitBounds={0};BOOL quartzVerified=NO;
+ if(!cv_scroll_target(front,focus,point.x,point.y,1,0,hitBounds))return fail(error,[NSString stringWithFormat:@"scroll cursor (%.0f,%.0f) is outside focused window (%.0f,%.0f,%.0f,%.0f); move to the task area first",point.x,point.y,focused.origin.x,focused.origin.y,focused.size.width,focused.size.height]);
+ NSArray *windows=windowInfo();if(!windows)return fail(error,@"WindowServer unavailable during scroll target check");
+ BOOL targetPresent=NO;for(NSDictionary *w in windows){CGRect targetBounds;
+ if([w[(__bridge NSString*)kCGWindowNumber] unsignedIntValue]==expectedWindow&&[w[(__bridge NSString*)kCGWindowOwnerPID] intValue]==front&&CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)w[(__bridge NSString*)kCGWindowBounds],&targetBounds)&&cv_scroll_same_window(focus,scrollRect(targetBounds))){targetPresent=YES;break;}}
+ if(!targetPresent)return fail(error,@"requested scroll window is not the focused window; stop input");
+ for(NSDictionary *w in windows){CGRect bounds;if(!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)w[(__bridge NSString*)kCGWindowBounds],&bounds))continue;if(!CGRectContainsPoint(bounds,point))continue;
+ quartzVerified=[w[(__bridge NSString*)kCGWindowNumber] unsignedIntValue]==expectedWindow&&[w[(__bridge NSString*)kCGWindowLayer]intValue]==0&&[w[(__bridge NSString*)kCGWindowOwnerPID]intValue]==front&&cv_scroll_same_window(focus,scrollRect(bounds));break;}
+ int hitPID=0;if(!quartzVerified&&scrollAXHit(point,front,&hitBounds))hitPID=front;
+ if(!cv_scroll_target(front,focus,point.x,point.y,quartzVerified,hitPID,hitBounds))return fail(error,@"scroll target not confirmed: Quartz and AX hit-test could not establish the focused window; stop input");
+ pid_t checked=0;CGRect checkedBounds;if(!focusedWindow(&checked,&checkedBounds,error))return 0;
+ if(checked!=front||!cv_scroll_same_window(focus,scrollRect(checkedBounds)))return fail(error,@"foreground window changed during scroll target check; stop input");
+ current=CGEventCreate(NULL);if(!current)return fail(error,@"cannot recheck cursor position");CGPoint checkedPoint=CGEventGetLocation(current);CFRelease(current);
+ if(checkedPoint.x!=point.x||checkedPoint.y!=point.y)return fail(error,@"cursor moved during scroll target check; stop input");
+ if(!requireAccessibility(error,1))return 0;
  event=CGEventCreateScrollWheelEvent(NULL,kCGScrollEventUnitLine,2,horizontal?0:delta,horizontal?-delta:0);
+ if(event)CGEventSetLocation(event,point);
  }
  if(!event)return fail(error,@"could not create input event");CGEventPost(kCGHIDEventTap,event);CFRelease(event);return 1;
 }}

@@ -204,12 +204,25 @@ func (d *Desktop) Execute(ctx context.Context, a platform.Action) (err error) {
 		if e = d.ready(ctx); e != nil {
 			return e
 		}
-		r, _, _ := user.NewProc("SetForegroundWindow").Call(h)
-		active, _, _ := getForeground.Call()
-		if r == 0 || active != h {
-			return fmt.Errorf("Windows foreground focus rules denied activation")
-		}
-		return nil
+		return focusWindow(ctx, h, 2*time.Second, focusOps{
+			check: func(ctx context.Context) error {
+				if err := d.ready(ctx); err != nil {
+					return err
+				}
+				current, err := d.resolve(a.WindowID)
+				if err != nil {
+					return err
+				}
+				if current != h {
+					return fmt.Errorf("focus window identity changed; stop input")
+				}
+				return nil
+			},
+			foreground: func() uintptr { active, _, _ := getForeground.Call(); return active },
+			minimized:  func() bool { iconic, _, _ := user.NewProc("IsIconic").Call(h); return iconic != 0 },
+			restore:    func() bool { accepted, _, _ := user.NewProc("ShowWindowAsync").Call(h, 9); return accepted != 0 }, // SW_RESTORE
+			activate:   func() bool { accepted, _, _ := user.NewProc("SetForegroundWindow").Call(h); return accepted != 0 },
+		})
 	}
 	return fmt.Errorf("unsupported action")
 }

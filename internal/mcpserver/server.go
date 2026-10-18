@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const serverVersion = "0.10.1"
+const serverVersion = "0.10.3"
 
 type Service struct {
 	started  time.Time

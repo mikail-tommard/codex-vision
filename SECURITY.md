@@ -30,6 +30,14 @@ Process-image checks, opaque window IDs and repeated foreground checks reduce ac
 
 The exact installed FreeCAD launcher/runtime pair is recognized only when confirming launch. Input into its GUI requires a separate runtime allowlist entry. This does not permit Python, arbitrary helpers or an entire directory.
 
+### macOS scroll targeting
+
+Scroll is pinned to the current opaque window ID/native Quartz ID and PID. A Quartz bounding-box ambiguity may be resolved only by a native AX hit belonging to that foreground process and focused-window geometry. Layers are not blindly ignored. Missing evidence or a foreign/different window refuses input. Cursor position and foreground geometry are rechecked before posting; same-user races cannot be eliminated. This fallback reads structural ownership/bounds, not field contents.
+
+### Windows focus confirmation
+
+Focus restores an iconic target asynchronously, sends one foreground request, then polls for the exact HWND within a bounded deadline. Each poll rechecks the interactive desktop and the token/PID. Cancellation or stale identity stops the attempt. No synthetic Alt/Tab, taskbar click, AttachThreadInput, foreground-lock setting or elevation fallback is used. OS denial and unresponsive targets remain possible; the error reports observed request/result metadata rather than claiming a proven Windows policy cause.
+
 ## Actions, waiting and failure
 
 Input is serialized and cancellation-aware. Each action retains policy and foreground checks. A desktop batch prevalidates predictable steps, pins window/process/geometry and stops at the first error. Completed steps are not rolled back. The server never automatically repeats a partially executed batch, click or drag.

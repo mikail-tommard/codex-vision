@@ -239,7 +239,30 @@ func (d *Desktop) Execute(ctx context.Context, a platform.Action) (err error) {
 		if a.Horizontal {
 			h = 1
 		}
-		ok = C.cv_event(2, 0, 0, C.int(a.Delta/120), h, &message)
+		target, err := d.Active(ctx)
+		if err != nil {
+			return err
+		}
+		if a.WindowID != "" && target.ID != a.WindowID {
+			return fmt.Errorf("target window is not foreground; stop scroll")
+		}
+		var nativeID uint32
+		var pid int
+		d.mu.Lock()
+		for id, token := range d.ids {
+			if token.ID == target.ID && token.Process == target.Process {
+				nativeID, pid = id, token.PID
+				break
+			}
+		}
+		d.mu.Unlock()
+		if nativeID == 0 || pid <= 0 {
+			return fmt.Errorf("scroll window identity is stale; refresh window_list")
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		ok = C.cv_event(2, 0, 0, C.int(a.Delta/120), h, C.uint32_t(nativeID), C.int(pid), &message)
 	case "window_focus":
 		ws, e := d.Windows(ctx)
 		if e != nil {

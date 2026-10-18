@@ -77,7 +77,7 @@ func (d *Desktop) movePointer(ctx context.Context, a platform.Action) (platform.
 			return err
 		}
 		var message *C.char
-		ok := C.cv_event(1, C.double(x), C.double(y), 0, 0, &message)
+		ok := C.cv_event(1, C.double(x), C.double(y), 0, 0, 0, 0, &message)
 		return nativeError(ok, message)
 	}); err != nil {
 		return target, err

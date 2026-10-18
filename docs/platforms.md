@@ -32,6 +32,14 @@ codex mcp add codex_vision -- "C:\path\codex-vision\bin\codex-vision-windows-amd
 
 Координаты — физические пиксели виртуального рабочего стола, включая отрицательные начала. Backend проверяет DPI-awareness и отказывает на недоступном/защищённом desktop. UAC и ограничения Windows на фокус не обходятся. Поля macOS Accessibility и macOS app_launch недоступны.
 
+### Переключение окон Windows
+
+`window_focus` восстанавливает свёрнутое окно через `ShowWindowAsync`, затем один раз вызывает `SetForegroundWindow` и до 2 секунд ожидает точный foreground HWND. Во время ожидания сохраняются проверка desktop, PID/opaque ID и отмена. Реальный запрет Windows не обходится: нет имитации Alt+Tab, подключения чужих input queues или изменения foreground-lock настроек. Клики по панели задач остаются ограничены политикой активного окна.
+
+Ошибка содержит признаки запроса восстановления, возврат SetForegroundWindow и наблюдаемый HWND. Она не доказывает точную причину Windows. Потребуется ручная активация, если система или приложение не завершают переключение в пределах ожидания.
+
+Microsoft описывает [асинхронное завершение активации](https://devblogs.microsoft.com/oldnewthing/20161118-00/?p=94745/) и [ограничения SetForegroundWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow). Native-сборка на другой ОС не является проверкой реального переключения на Windows.
+
 ## Linux X11
 
 Нужны установленные локально `xrandr`, `xprop`, `xdotool`, ImageMagick `import` и `loginctl`. Сервер сам пакеты не устанавливает.

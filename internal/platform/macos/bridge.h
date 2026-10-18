@@ -3,7 +3,7 @@
 char *cv_monitors(void);
 char *cv_windows(int active);
 int cv_capture(uint32_t display, int timeout_ms, void **bytes, size_t *length, char **error);
-int cv_event(int kind, double x, double y, int delta, int horizontal, char **error);
+int cv_event(int kind, double x, double y, int delta, int horizontal, uint32_t window, int pid, char **error);
 int cv_focus(uint32_t window, char **error);
 
 int cv_button(int button,int phase,double x,double y,int count,char **error);
