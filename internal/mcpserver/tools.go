@@ -99,6 +99,14 @@ func bind[T any](s *mcp.Server, svc *Service, name, desc string, read bool, fn f
 		}
 	}
 	if name == "desktop_batch" || name == "desktop_act" {
+		for field, maximum := range map[string]float64{"settle_ms": 2000, "wait_ms": 30000} {
+			schema.Properties[field].AnyOf = []*jsonschema.Schema{
+				{Const: ptr[any](float64(0))},
+				{Minimum: ptr(100.0), Maximum: ptr(maximum)},
+			}
+		}
+		schema.Properties["wait_for"].Enum = []any{"change", "response"}
+		schema.Properties["result_mode"].Enum = []any{"auto", "image"}
 		schema.Properties["steps"].MinItems = ptr(1)
 		schema.Properties["steps"].MaxItems = ptr(12)
 		for _, def := range schema.Defs {

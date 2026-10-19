@@ -42,10 +42,9 @@ func (v *Service) registerDesktopBatch(s *mcp.Server) {
 func (v *Service) desktopBatch(ctx context.Context, a DesktopBatchArgs) (*mcp.CallToolResult, error) {
 	return v.runDesktopBatch(ctx, a, nil)
 }
-func (v *Service) runDesktopBatch(ctx context.Context, a DesktopBatchArgs, beforeStep func(context.Context, int) error) (*mcp.CallToolResult, error) {
-	toolStarted := time.Now()
+func (v *Service) prepareBatchOptions(a *DesktopBatchArgs) error {
 	if a.Expect != nil && a.ReadyWhen != nil {
-		return nil, fmt.Errorf("choose expect or ready_when")
+		return fmt.Errorf("choose expect or ready_when")
 	}
 	if a.WaitFor == "" {
 		a.WaitFor = "change"
@@ -54,16 +53,16 @@ func (v *Service) runDesktopBatch(ctx context.Context, a DesktopBatchArgs, befor
 		a.ResultMode = "auto"
 	}
 	if a.WaitFor != "change" && a.WaitFor != "response" {
-		return nil, fmt.Errorf("wait_for must be change or response")
+		return fmt.Errorf("wait_for must be change or response")
 	}
 	if a.ResultMode != "auto" && a.ResultMode != "image" {
-		return nil, fmt.Errorf("result_mode must be auto or image")
+		return fmt.Errorf("result_mode must be auto or image")
 	}
 	if !v.Config.Images {
-		return nil, fmt.Errorf("images disabled locally")
+		return fmt.Errorf("images disabled locally")
 	}
 	if len(a.Steps) < 1 || len(a.Steps) > 12 {
-		return nil, fmt.Errorf("steps must contain 1..12 actions")
+		return fmt.Errorf("steps must contain 1..12 actions")
 	}
 	if a.SettleMS == 0 {
 		a.SettleMS = 350
@@ -72,10 +71,18 @@ func (v *Service) runDesktopBatch(ctx context.Context, a DesktopBatchArgs, befor
 		a.WaitMS = min(25000, max(100, v.Config.TimeoutMS-2000))
 	}
 	if a.SettleMS < 100 || a.SettleMS > 2000 || a.WaitMS < 100 || a.WaitMS > 30000 {
-		return nil, fmt.Errorf("settle_ms must be 100..2000 and wait_ms 100..30000")
+		return fmt.Errorf("settle_ms must be 100..2000 and wait_ms 100..30000")
 	}
 	if _, e := input.ApproachDuration(a.Motion, v.Config.CursorMode); e != nil {
-		return nil, e
+		return e
+	}
+	return nil
+}
+
+func (v *Service) runDesktopBatch(ctx context.Context, a DesktopBatchArgs, beforeStep func(context.Context, int) error) (*mcp.CallToolResult, error) {
+	toolStarted := time.Now()
+	if err := v.prepareBatchOptions(&a); err != nil {
+		return nil, err
 	}
 	w, e := v.attentionWindow(ctx, a.WindowID)
 	if e != nil {

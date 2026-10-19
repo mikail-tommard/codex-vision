@@ -56,8 +56,8 @@ type DesktopActArgs struct {
 	WaitFor        string         `json:"wait_for,omitempty" jsonschema:"change (default): own stable result, including 2048. response: two visual phases only when awaiting a separate response; not proof of an opponent turn"`
 	ResultMode     string         `json:"result_mode,omitempty"`
 	Motion         string         `json:"motion,omitempty"`
-	SettleMS       int            `json:"settle_ms,omitempty"`
-	WaitMS         int            `json:"wait_ms,omitempty"`
+	SettleMS       int            `json:"settle_ms,omitempty" jsonschema:"100..2000ms; omitted or 0 uses 350ms"`
+	WaitMS         int            `json:"wait_ms,omitempty" jsonschema:"100..30000ms; omitted or 0 uses local default up to 25000ms"`
 	ImageOnTimeout bool           `json:"image_on_timeout,omitempty"`
 }
 
@@ -308,8 +308,10 @@ func replaceMetadata(out *mcp.CallToolResult, meta map[string]any) *mcp.CallTool
 }
 
 func (v *Service) desktopAct(ctx context.Context, a DesktopActArgs) (*mcp.CallToolResult, error) {
-	if len(a.Steps) < 1 || len(a.Steps) > 12 {
-		return nil, fmt.Errorf("steps must contain 1..12 actions")
+	batch := DesktopBatchArgs{Steps: a.Steps, Expect: a.Expect, ReadyWhen: a.ReadyWhen, WaitFor: a.WaitFor, ResultMode: a.ResultMode, Motion: a.Motion, SettleMS: a.SettleMS, WaitMS: a.WaitMS, ImageOnTimeout: a.ImageOnTimeout}
+	// Reject static options before reading/focusing a window or touching its view.
+	if err := v.prepareBatchOptions(&batch); err != nil {
+		return nil, err
 	}
 	if a.Coordinates == "" {
 		a.Coordinates = "desktop"
@@ -412,33 +414,40 @@ func (v *Service) desktopAct(ctx context.Context, a DesktopActArgs) (*mcp.CallTo
 			s.Y = view.ImageBounds.Y + s.Y*view.ImageBounds.Height/view.ImageHeight
 		}
 	}
-	v.views.mu.Lock()
-	if v.views.current != view || time.Now().After(view.Expires) {
-		v.views.mu.Unlock()
-		return nil, fmt.Errorf("stale or replaced view")
-	}
-	v.views.current = nil // Consume before any batch event, including partial failures.
-	v.views.mu.Unlock()
-	out, err := v.runDesktopBatch(ctx, DesktopBatchArgs{ID: view.ObservationID, WindowID: view.Window.ID, WatchRegion: &region, Steps: steps, Expect: a.Expect, ReadyWhen: a.ReadyWhen, WaitFor: a.WaitFor, ResultMode: a.ResultMode, Motion: a.Motion, SettleMS: a.SettleMS, WaitMS: a.WaitMS, ImageOnTimeout: a.ImageOnTimeout}, func(ctx context.Context, index int) error {
+	batch.ID, batch.WindowID, batch.WatchRegion, batch.Steps = view.ObservationID, view.Window.ID, &region, steps
+	consumed := false
+	out, err := v.runDesktopBatch(ctx, batch, func(ctx context.Context, index int) error {
 		target, ok := refs[index]
-		if !ok {
-			return nil
-		}
-		current, e := v.readControls(ctx, view.Window, view.MaxNodes)
-		if e != nil {
-			return e
-		}
-		if current.Truncated {
-			return fmt.Errorf("stale control: current tree incomplete before step %d", index+1)
-		}
-		count := 0
-		for _, c := range current.Controls {
-			if c.Role == target.Role && c.Label == target.Label && c.Bounds == target.Bounds && c.Enabled != nil && *c.Enabled {
-				count++
+		if ok {
+			current, e := v.readControls(ctx, view.Window, view.MaxNodes)
+			if e != nil {
+				return e
+			}
+			if current.Truncated {
+				return fmt.Errorf("stale control: current tree incomplete before step %d", index+1)
+			}
+			count := 0
+			for _, c := range current.Controls {
+				if c.Role == target.Role && c.Label == target.Label && c.Bounds == target.Bounds && c.Enabled != nil && *c.Enabled {
+					count++
+				}
+			}
+			if count != 1 {
+				return fmt.Errorf("stale control before step %d: matched %d", index+1, count)
 			}
 		}
-		if count != 1 {
-			return fmt.Errorf("stale control before step %d: matched %d", index+1, count)
+		// Batch preflight (including argument and expectation validation) has
+		// succeeded. Consume immediately before the first input attempt. Never
+		// restore after that point, even on a timeout or partial delivery.
+		if !consumed {
+			v.views.mu.Lock()
+			if v.views.current != view || time.Now().After(view.Expires) {
+				v.views.mu.Unlock()
+				return fmt.Errorf("stale or replaced view")
+			}
+			v.views.current = nil
+			consumed = true
+			v.views.mu.Unlock()
 		}
 		return nil
 	})
@@ -446,7 +455,7 @@ func (v *Service) desktopAct(ctx context.Context, a DesktopActArgs) (*mcp.CallTo
 		return nil, err
 	}
 	meta := out.StructuredContent.(map[string]any)
-	meta["view_consumed"] = true
+	meta["view_consumed"] = consumed
 	meta["preflight_refocus_attempted"] = refocused
 	out = replaceMetadata(out, meta)
 	interaction, _ := meta["interaction"].(observation.ActionWaitResult)
