@@ -25,6 +25,13 @@ int main(void){cv_focus_rect target={10,20,800,600};cv_window_candidate a[3]={{{
  a[0].valid=0;a[1].valid=0;m=cv_select_window(target,a,3);assert(m.index==-1&&m.bounds_matches==0);
  a[0].valid=1;a[0].bounds.width=0;m=cv_select_window(target,a,1);assert(m.index==-1);
  a[0].bounds.width=NAN;m=cv_select_window(target,a,1);assert(m.index==-1);
+ assert(cv_unique_active_window(2,1,1,1)==1);
+ assert(cv_unique_active_window(2,0,-1,1)==-1);
+ assert(cv_unique_active_window(2,2,1,1)==-1);
+ assert(cv_unique_active_window(2,1,1,0)==-1);
+ assert(cv_unique_active_window(2,1,2,1)==-1);
+ assert(cv_focus_match_retryable(0)&&cv_focus_match_retryable(-25212)&&cv_focus_match_retryable(-25204));
+ assert(!cv_focus_match_retryable(-25211)&&!cv_focus_match_retryable(-25205));
  return 0;}`
 	if e := os.WriteFile(source, []byte(code), 0600); e != nil {
 		t.Fatal(e)

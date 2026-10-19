@@ -68,3 +68,21 @@ func TestStatusDiagnosticsRequireExplicitRequest(t *testing.T) {
 		t.Fatal(recent)
 	}
 }
+
+func TestFocusAmbiguityDiagnosticsContainOnlyCounts(t *testing.T) {
+	var metrics usageMetrics
+	message := "cannot uniquely match window to Accessibility element; refusing focus (AX windows=3, bounds matches=2, title matches=0, unreadable bounds=1, AX error=0, activation attempted=yes); secret-window-title"
+	failure := fail(fmt.Errorf("%s", message))
+	metrics.record("window_focus", failure, time.Millisecond)
+	diagnostic := metrics.recentSnapshot()[0]
+	if diagnostic.FailureCode != "ambiguous_target" || diagnostic.Reason != "window_match_ambiguous" || diagnostic.FocusMatch == nil || diagnostic.FocusMatch.Windows != 3 || diagnostic.FocusMatch.BoundsMatches != 2 || diagnostic.FocusMatch.TitleMatches != 0 || diagnostic.NativeError == nil || *diagnostic.NativeError != 0 {
+		t.Fatal(diagnostic)
+	}
+	encoded, _ := json.Marshal(diagnostic)
+	if strings.Contains(string(encoded), "secret-window-title") {
+		t.Fatal("title leaked", string(encoded))
+	}
+	if !focusFailure("focused Accessibility window matches 2 Quartz windows; refusing ambiguous foreground") {
+		t.Fatal("ambiguous foreground is not guarded")
+	}
+}

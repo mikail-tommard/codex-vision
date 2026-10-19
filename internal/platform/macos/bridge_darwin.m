@@ -145,6 +145,24 @@ static int focusedWindow(pid_t *pid, CGRect *bounds, char **error) {
 static BOOL sameBounds(CGRect a,CGRect b) {
  return fabs(a.origin.x-b.origin.x)<1&&fabs(a.origin.y-b.origin.y)<1&&fabs(a.size.width-b.size.width)<1&&fabs(a.size.height-b.size.height)<1;
 }
+static id uiAttribute(AXUIElementRef element,CFStringRef name);
+static CGRect uiBounds(AXUIElementRef element);
+// Only disambiguate overlapping Quartz windows with a stable, independently
+// read focused AX element. Empty/duplicate titles never choose a window.
+static NSString *focusedTitle(pid_t pid,CGRect expected) {
+ AXUIElementRef app=AXUIElementCreateApplication(pid);if(!app)return nil;
+ AXUIElementSetMessagingTimeout(app,0.15);
+ id value=uiAttribute(app,kAXFocusedWindowAttribute);NSString *title=nil;
+ if(value&&CFGetTypeID((__bridge CFTypeRef)value)==AXUIElementGetTypeID()){
+  AXUIElementRef window=(__bridge AXUIElementRef)value;pid_t owner=0;
+  AXUIElementSetMessagingTimeout(window,0.15);
+  if(AXUIElementGetPid(window,&owner)==kAXErrorSuccess&&owner==pid&&sameBounds(uiBounds(window),expected)){
+   id name=uiAttribute(window,kAXTitleAttribute),again=uiAttribute(app,kAXFocusedWindowAttribute);int front=0;
+   if([name isKindOfClass:NSString.class]&&[name length]&&again&&CFGetTypeID((__bridge CFTypeRef)again)==AXUIElementGetTypeID()&&CFEqual((__bridge CFTypeRef)value,(__bridge CFTypeRef)again)&&freshFrontPID(NULL,&front)==0&&front==pid)title=[name copy];
+  }
+ }
+ CFRelease(app);return title;
+}
 char *cv_windows(int active) { @autoreleasepool {
  char *reason=NULL;if(!requireConsole(&reason)){char *out=json(@{@"error":@(reason)});free(reason);return out;}
  pid_t front=0;CGRect focused=CGRectZero;BOOL useAX=active&&AXIsProcessTrusted();
@@ -160,7 +178,20 @@ char *cv_windows(int active) { @autoreleasepool {
  // CGWindow.h defines an absent kCGWindowIsOnscreen as offscreen.
  item[@"on_screen"]=cv_json_bool([w[(__bridge NSString*)kCGWindowIsOnscreen] boolValue]);
  [out addObject:item];if(active&&!useAX)break;
- }return json(out);
+ }
+ if(useAX&&out.count>1){
+  NSString *title=focusedTitle(front,focused);
+  if(title.length){
+   int selected=-1,matches=0;
+   for(NSUInteger i=0;i<out.count;i++)if([out[i][@"title"] isEqualToString:title]){selected=(int)i;matches++;}
+   if(matches==1){pid_t checked=0;CGRect checkedBounds;char *checkError=NULL;
+    BOOL stable=focusedWindow(&checked,&checkedBounds,&checkError)&&checked==front&&sameBounds(checkedBounds,focused)&&[title isEqualToString:focusedTitle(front,focused)];
+    if(checkError)free(checkError);
+    int index=cv_unique_active_window(out.count,matches,selected,stable);if(index>=0)return json(@[out[(NSUInteger)index]]);
+   }
+  }
+ }
+ return json(out);
 }}
 static NSData *png(CGImageRef image) {
  if(!image)return nil;NSMutableData *out=[NSMutableData data];CGImageDestinationRef dest=CGImageDestinationCreateWithData((__bridge CFMutableDataRef)out,CFSTR("public.png"),1,NULL);if(!dest)return nil;
@@ -278,6 +309,11 @@ static AXUIElementRef matchFocusWindow(AXUIElementRef app,NSDictionary *target,c
  for(NSUInteger i=0;i<list.count;i++){
   if(NSProcessInfo.processInfo.systemUptime>=deadline){free(items);CFRelease(result);*readError=kAXErrorCannotComplete;return NULL;}
   AXUIElementRef w=(__bridge AXUIElementRef)list[i];if(CFGetTypeID(w)!=AXUIElementGetTypeID()){(*failedBounds)++;continue;}
+  // Some AX providers repeat the same element in AXWindows. Equal native
+  // references are aliases, not independent windows; do not invent ambiguity.
+  BOOL duplicate=NO;for(NSUInteger j=0;j<i;j++)if(CFGetTypeID((__bridge CFTypeRef)list[j])==AXUIElementGetTypeID()&&CFEqual((__bridge CFTypeRef)list[j],w)){duplicate=YES;break;}
+  if(duplicate)continue;
+  pid_t owner=0;if(AXUIElementGetPid(w,&owner)!=kAXErrorSuccess||owner!=[target[(__bridge NSString*)kCGWindowOwnerPID]intValue]){(*failedBounds)++;continue;}
   AXUIElementSetMessagingTimeout(w,(float)MIN(0.5,MAX(0.01,deadline-NSProcessInfo.processInfo.systemUptime)));
   CFTypeRef pos=NULL,size=NULL,name=NULL;CGPoint point;CGSize extent;
   BOOL ok=AXUIElementCopyAttributeValue(w,kAXPositionAttribute,&pos)==kAXErrorSuccess&&AXUIElementCopyAttributeValue(w,kAXSizeAttribute,&size)==kAXErrorSuccess&&pos&&size&&CFGetTypeID(pos)==AXValueGetTypeID()&&CFGetTypeID(size)==AXValueGetTypeID()&&AXValueGetValue(pos,kAXValueCGPointType,&point)&&AXValueGetValue(size,kAXValueCGSizeType,&extent);
@@ -297,28 +333,40 @@ int cv_focus(uint32_t window,char **error) { @autoreleasepool {
  NSTimeInterval deadline=NSProcessInfo.processInfo.systemUptime+2.0;
  cv_window_match selection;AXError readError;int windows=0,failedBounds=0;BOOL activated=NO;
  AXUIElementRef match=matchFocusWindow(app,target,&selection,&readError,&windows,&failedBounds,deadline);
- // A background Electron app may not expose its AX windows until activated.
- // Activate at most once, never click/type, then refresh the exact Quartz ID.
- int front=0;BOOL background=freshFrontPID(NULL,&front)==0&&front!=pid;
- if(!match&&background&&NSProcessInfo.processInfo.systemUptime<deadline&&selection.bounds_matches==0&&(readError==kAXErrorSuccess||readError==kAXErrorNoValue||readError==kAXErrorCannotComplete)){
+ // Application activation can materialize AX windows or change tab/window
+ // metadata. Refresh the exact Quartz target and re-match after ONE activation,
+ // even if the pre-activation match looked unique. Never reuse a stale AX match.
+ int front=0;if(freshFrontPID(NULL,&front)!=0||front<=0){if(match)CFRelease(match);CFRelease(app);return fail(error,@"cannot confirm foreground process before window activation");}
+ BOOL background=front!=pid;
+ if(background&&NSProcessInfo.processInfo.systemUptime>=deadline){if(match)CFRelease(match);CFRelease(app);return fail(error,@"foreground not confirmed: focus selection time budget exhausted");}
+ if(background&&NSProcessInfo.processInfo.systemUptime<deadline&&(match||cv_focus_match_retryable(readError))){
+  if(match){CFRelease(match);match=NULL;}
   if(!activateFocusApp([NSRunningApplication runningApplicationWithProcessIdentifier:pid],error)){CFRelease(app);return 0;}activated=YES;
-  // Activation is asynchronous. Poll only read-side AX exposure within the budget;
-  // never post a second activation or relax matching after a timeout.
+ }
+ if((activated||!match)&&cv_focus_match_retryable(readError)){
+  // Poll reads only. Geometry/title uniqueness remains mandatory, including
+  // when the provider initially exposes several overlapping window elements.
   for(int attempt=0;attempt<10&&NSProcessInfo.processInfo.systemUptime<deadline;attempt++){
    if(attempt)usleep(50000);
+   if(!requireAccessibility(error,0)){CFRelease(app);return 0;}
    target=focusTarget(window,pid);if(!target){CFRelease(app);return fail(error,@"target window changed after application activation");}
    match=matchFocusWindow(app,target,&selection,&readError,&windows,&failedBounds,deadline);
-   if(match||selection.bounds_matches>0||(readError!=kAXErrorSuccess&&readError!=kAXErrorNoValue&&readError!=kAXErrorCannotComplete))break;
+   if(match||!cv_focus_match_retryable(readError))break;
   }
  }
  if(!match){CFRelease(app);return fail(error,[NSString stringWithFormat:@"cannot uniquely match window to Accessibility element; refusing focus (AX windows=%d, bounds matches=%d, title matches=%d, unreadable bounds=%d, AX error=%d, activation attempted=%@)",windows,selection.bounds_matches,selection.title_matches,failedBounds,readError,activated?@"yes":@"no"]);}
+ if(!requireAccessibility(error,0)){CFRelease(match);CFRelease(app);return 0;}
+ NSDictionary *confirmedTarget=focusTarget(window,pid);CGRect confirmedBounds;pid_t confirmedOwner=0;
+ if(!confirmedTarget||!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)confirmedTarget[(__bridge NSString*)kCGWindowBounds],&confirmedBounds)||AXUIElementGetPid(match,&confirmedOwner)!=kAXErrorSuccess||confirmedOwner!=pid||!sameBounds(uiBounds(match),confirmedBounds)){
+  CFRelease(match);CFRelease(app);return fail(error,@"target window changed before AXRaise; refusing stale focus");
+ }
  CFTypeRef minimized=NULL;AXError e;
  if(AXUIElementCopyAttributeValue(match,kAXMinimizedAttribute,&minimized)==kAXErrorSuccess&&minimized&&CFGetTypeID(minimized)==CFBooleanGetTypeID()&&CFBooleanGetValue((CFBooleanRef)minimized)){
   e=AXUIElementSetAttributeValue(match,kAXMinimizedAttribute,kCFBooleanFalse);
   if(e!=kAXErrorSuccess){CFRelease(minimized);CFRelease(match);CFRelease(app);return fail(error,@"macOS denied restoring the minimized window");}
  }
  if(minimized)CFRelease(minimized);
- if(!activated&&!activateFocusApp([NSRunningApplication runningApplicationWithProcessIdentifier:pid],error)){CFRelease(match);CFRelease(app);return 0;}
+ if(!requireAccessibility(error,0)){CFRelease(match);CFRelease(app);return 0;}
  e=AXUIElementPerformAction(match,kAXRaiseAction);
  if(e==kAXErrorSuccess){AXUIElementSetAttributeValue(match,kAXMainAttribute,kCFBooleanTrue);AXUIElementSetAttributeValue(app,kAXFocusedWindowAttribute,match);}
  CFRelease(match);CFRelease(app);

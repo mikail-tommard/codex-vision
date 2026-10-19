@@ -30,7 +30,7 @@ func (g *recoveryGuard) status() recoveryState {
 }
 func focusFailure(message string) bool {
 	message = strings.ToLower(message)
-	for _, part := range []string{"cannot read focused application", "cannot confirm foreground process", "foreground changed during focus confirmation", "no accessible focused window", "no visible foreground window", "cannot read focused window bounds", "did not confirm requested foreground window", "cannot uniquely match window to accessibility", "foreground not confirmed", "application launch requested but foreground not confirmed"} {
+	for _, part := range []string{"cannot read focused application", "cannot confirm foreground process", "foreground changed during focus confirmation", "no accessible focused window", "no visible foreground window", "cannot read focused window bounds", "focused accessibility window matches", "did not confirm requested foreground window", "cannot uniquely match window to accessibility", "foreground not confirmed", "application launch requested but foreground not confirmed"} {
 		if strings.Contains(message, part) {
 			return true
 		}

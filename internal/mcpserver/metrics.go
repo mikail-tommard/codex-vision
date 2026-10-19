@@ -28,6 +28,7 @@ type callDiagnostic struct {
 	FailureCode    string                          `json:"failure_code,omitempty"`
 	Reason         string                          `json:"reason,omitempty"`
 	NativeError    *int                            `json:"native_error,omitempty"`
+	FocusMatch     *focusMatchDiagnostic           `json:"focus_match,omitempty"`
 	Stage          string                          `json:"stage,omitempty"`
 	Posted         bool                            `json:"action_posted,omitempty"`
 	MayHaveChanged bool                            `json:"may_have_changed,omitempty"`
@@ -38,12 +39,22 @@ type callDiagnostic struct {
 	Images         int                             `json:"images"`
 }
 
-var nativeErrorRE = regexp.MustCompile(`native error (-?[0-9]{1,9})`)
+type focusMatchDiagnostic struct {
+	Windows          int `json:"windows"`
+	BoundsMatches    int `json:"bounds_matches"`
+	TitleMatches     int `json:"title_matches"`
+	UnreadableBounds int `json:"unreadable_bounds"`
+}
+
+var nativeErrorRE = regexp.MustCompile(`(?:native error |AX error=)(-?[0-9]{1,9})`)
+var focusMatchRE = regexp.MustCompile(`AX windows=([0-9]{1,4}), bounds matches=([0-9]{1,4}), title matches=([0-9]{1,4}), unreadable bounds=([0-9]{1,4})`)
 
 // Closed categories only: never retain the original error, arguments or UI text.
 func diagnosticReason(message string) string {
 	s := strings.ToLower(message)
 	switch {
+	case strings.Contains(s, "cannot uniquely match window") || strings.Contains(s, "focused accessibility window matches"):
+		return "window_match_ambiguous"
 	case strings.Contains(s, "cannot read focused") || strings.Contains(s, "no visible foreground"):
 		return "active_window_unavailable"
 	case strings.Contains(s, "geometry") || strings.Contains(s, "window identity"):
@@ -105,6 +116,13 @@ func (m *usageMetrics) record(tool string, out *mcp.CallToolResult, elapsed time
 		}
 		if message, ok := meta["error"].(string); ok {
 			diagnostic.Reason = diagnosticReason(message)
+			if values := focusMatchRE.FindStringSubmatch(message); len(values) == 5 {
+				counts := [4]int{}
+				for i := range counts {
+					counts[i], _ = strconv.Atoi(values[i+1])
+				}
+				diagnostic.FocusMatch = &focusMatchDiagnostic{Windows: counts[0], BoundsMatches: counts[1], TitleMatches: counts[2], UnreadableBounds: counts[3]}
+			}
 			if matched := nativeErrorRE.FindStringSubmatch(message); len(matched) == 2 {
 				n, e := strconv.Atoi(matched[1])
 				if e == nil {

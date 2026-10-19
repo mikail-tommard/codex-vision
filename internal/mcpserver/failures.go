@@ -36,7 +36,7 @@ func classifyFailure(err error) failureInfo {
 	case strings.Contains(s, "outside") || strings.Contains(s, "gap between monitors"):
 		f.Code = "coordinates_outside_target"
 		f.NextAction = "inspect_bounds_and_coordinate_scale"
-	case strings.Contains(s, "ambiguous") || strings.Contains(s, "matched 0") || strings.Contains(s, "matched 2"):
+	case strings.Contains(s, "ambiguous") || strings.Contains(s, "cannot uniquely match window") || strings.Contains(s, "matched 0") || strings.Contains(s, "matched 2"):
 		f.Code = "ambiguous_target"
 		f.NextAction = "desktop_observe"
 	case strings.Contains(s, "already satisfied"):
