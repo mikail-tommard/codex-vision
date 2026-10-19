@@ -19,6 +19,9 @@ func actionContinuation(r observation.ActionWaitResult, image bool, err error) m
 	return map[string]any{
 		"next":                         state,
 		"repeat_action":                false,
+		"restart_observation":          false,
+		"input_may_have_posted":        r.Posted || r.MayHaveChanged,
+		"verification_only":            r.TimedOut && !image && err == nil,
 		"immediate_observation_needed": false,
 		"visual_state_included":        image,
 		"scope":                        "explicit native UI predicate only when text; visual changes do not verify application semantics",

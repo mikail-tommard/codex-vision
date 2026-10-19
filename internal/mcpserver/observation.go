@@ -99,7 +99,7 @@ func (v *Service) registerObservation(server *mcp.Server) {
 		}
 		return v.observationResult(status, f), nil
 	})
-	bind(server, v, "observation_control", "Get status, focus model attention on watch_region in a confirmed window without restarting the full preview, pause/resume capture, or stop the local stream. Always stop task-mode observation on task completion or error. Status can omit observation_id; other actions require it.", false, func(ctx context.Context, a ObserveControlArgs) (*mcp.CallToolResult, error) {
+	bind(server, v, "observation_control", "Status, focus watch_region, pause/resume or stop capture. Stop task stream on completion or a terminal blocker, not each recoverable timeout. Do not stop/restart to verify an action or clear an input failure. Status may omit observation_id; other actions require it.", false, func(ctx context.Context, a ObserveControlArgs) (*mcp.CallToolResult, error) {
 		if a.Action == "focus" {
 			if a.WatchRegion == nil {
 				return nil, fmt.Errorf("watch_region required")

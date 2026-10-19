@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const serverVersion = "0.13.1"
+const serverVersion = "0.13.2"
 
 type Service struct {
 	views    agentViews

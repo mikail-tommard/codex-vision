@@ -10,6 +10,9 @@ import (
 )
 
 type Empty struct{}
+type StatusArgs struct {
+	IncludeRecent bool `json:"include_recent,omitempty" jsonschema:"Include last 12 handled calls: outcome, action state and local timings only; no UI text, arguments or images"`
+}
 type CaptureArgs struct {
 	MonitorID string `json:"monitor_id,omitempty"`
 	Format    string `json:"format,omitempty" jsonschema:"png or jpeg (default png)"`
@@ -317,10 +320,18 @@ func (v *Service) register(s *mcp.Server) {
 		w = ws[0]
 		return result(map[string]any{"ok": true, "backend": v.Desktop.Name(), "window": w, "navigation_verified": false}), nil
 	})
-	bind(s, v, "window_focus", "Activate an observed window in a locally allowlisted application, including across applications. Stop on failure; verify window_get_active before typing.", false, func(ctx context.Context, a FocusArgs) (*mcp.CallToolResult, error) {
+	bind(s, v, "window_focus", "Activate an observed allowlisted window across applications; backend confirms focus. Stop on native failure. Next use desktop_observe to inspect; no extra window_get_active is needed before that confirmed view.", false, func(ctx context.Context, a FocusArgs) (*mcp.CallToolResult, error) {
 		return v.action(ctx, platform.Action{Tool: "window_focus", WindowID: a.WindowID})
 	})
-	bind(s, v, "session_status", "Local mode, effective input permissions, budget and stop status.", false, func(_ context.Context, _ Empty) (*mcp.CallToolResult, error) { return v.sessionStatus(), nil })
+	bind(s, v, "session_status", "Local permissions, version, budget and counters. include_recent=true adds bounded, content-free call diagnostics.", false, func(_ context.Context, a StatusArgs) (*mcp.CallToolResult, error) {
+		out := v.sessionStatus()
+		if a.IncludeRecent {
+			meta := out.StructuredContent.(map[string]any)
+			meta["recent_calls"] = v.metrics.recentSnapshot()
+			return result(meta), nil
+		}
+		return out, nil
+	})
 	bind(s, v, "session_stop", "Emergency stop only: latch all input disabled, cancel active action and stop observation. Requires local operator restart; never use for routine task cleanup, pausing or ending a turn. To stop capture while keeping input usable, use observation_control action=stop.", false, func(_ context.Context, _ Empty) (*mcp.CallToolResult, error) {
 		v.Close()
 		return v.sessionStatus(), nil
