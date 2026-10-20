@@ -36,6 +36,12 @@ codex mcp add codex_vision -- "C:\path\codex-vision\bin\codex-vision-windows-amd
 
 Координаты — физические пиксели виртуального рабочего стола, включая отрицательные начала. Backend проверяет DPI-awareness и отказывает на недоступном/защищённом desktop. UAC и ограничения Windows на фокус не обходятся. Поля macOS Accessibility и macOS app_launch недоступны.
 
+### Захват изображения Windows
+
+С версии 0.13.5 используется top-down 32-bpp `CreateDIBSection` вместо `CreateCompatibleBitmap` + `GetDIBits`. После `BitBlt` вызывается `GdiFlush`, затем пиксели копируются в собственную RGBA-память до удаления DIB. Ошибка старой сборки `GetDIBits incomplete: The operation completed successfully` означает, что число прочитанных строк не совпало с ожидаемым; нулевой last-error не устанавливает причину. Она не доказывает, что Chrome свёрнут или что отказал фокус.
+
+Для проверки на разблокированной Windows с установленным Go: `$env:CODEX_VISION_WINDOWS_INTEGRATION='1'; go test ./internal/platform/windows -run TestNativeObserveIntegration -count=1`. Это read-only тест экрана; его нельзя считать выполненным по результатам кросс-компиляции. После обновления EXE перезапустите MCP-подключение и проверьте `session_status.server.version`.
+
 ### Переключение окон Windows
 
 `window_focus` восстанавливает свёрнутое окно через `ShowWindowAsync`, затем один раз вызывает `SetForegroundWindow` и до 2 секунд ожидает точный foreground HWND. Во время ожидания сохраняются проверка desktop, PID/opaque ID и отмена. Реальный запрет Windows не обходится: нет имитации Alt+Tab, подключения чужих input queues или изменения foreground-lock настроек. Клики по панели задач остаются ограничены политикой активного окна.

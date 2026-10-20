@@ -24,6 +24,7 @@ type agentView struct {
 	FocusAttempted          bool
 	ImageBounds             platform.Rect
 	ImageWidth, ImageHeight int
+	ImageSequence           uint64
 }
 type agentViews struct {
 	mu      sync.Mutex
@@ -211,6 +212,14 @@ func (v *Service) attachAgentView(ctx context.Context, w platform.Window, region
 		view.ImageBounds = f.Bounds
 		view.ImageWidth = f.Width
 		view.ImageHeight = f.Height
+		view.ImageSequence = f.Sequence
+	} else if unchanged, ok := meta["changed"].(bool); ok && !unchanged && !out.IsError {
+		// An unchanged observation must not discard the coordinate system of the
+		// last delivered image. Never carry it across input, attention, or a new
+		// unseen frame (for example when delivery is throttled).
+		v.views.mu.Lock()
+		view.inheritImageCoordinates(v.views.current, status, time.Now())
+		v.views.mu.Unlock()
 	}
 	controls := []map[string]any{}
 	if !includeControls {
@@ -280,6 +289,9 @@ func (v *Service) attachAgentView(ctx context.Context, w platform.Window, region
 	}
 	meta["window"] = decorated[0]
 	meta["view"] = map[string]any{"view_id": view.ID, "expires_at": view.Expires.UTC(), "observation_id": view.ObservationID, "watch_region": view.Region, "capture_bounds": status.CaptureBounds, "image_coordinates_available": view.ImageWidth > 0, "atomic_ui_snapshot": false}
+	if view.ImageWidth > 0 {
+		meta["view"].(map[string]any)["image_sequence"] = view.ImageSequence
+	}
 	// Keep the agent-facing result lean. Detailed cumulative counters remain in
 	// observation_control status/session_status; don't repeat them each decision.
 	if observed, ok := meta["observation"].(observation.Status); ok {
@@ -296,6 +308,19 @@ func (v *Service) attachAgentView(ctx context.Context, w platform.Window, region
 	v.views.current = view
 	v.views.mu.Unlock()
 	return replaceMetadata(out, meta), nil
+}
+
+func (view *agentView) inheritImageCoordinates(previous *agentView, status observation.Status, now time.Time) {
+	if previous == nil || !now.Before(previous.Expires) || status.State != "running" ||
+		previous.ObservationID != view.ObservationID || previous.FocusVersion != view.FocusVersion ||
+		previous.Region != view.Region || !sameAgentWindow(previous.Window, view.Window) ||
+		previous.Window.Title != view.Window.Title || previous.ImageSequence == 0 ||
+		previous.ImageSequence != status.Sequence || previous.ImageWidth <= 0 || previous.ImageHeight <= 0 {
+		return
+	}
+	view.ImageBounds = previous.ImageBounds
+	view.ImageWidth, view.ImageHeight = previous.ImageWidth, previous.ImageHeight
+	view.ImageSequence = previous.ImageSequence
 }
 
 func replaceMetadata(out *mcp.CallToolResult, meta map[string]any) *mcp.CallToolResult {

@@ -70,6 +70,13 @@ type bitmapHeader struct {
 	ClrUsed, ClrImportant  uint32
 }
 
+// BITMAPINFO includes the color-table slot, even though BI_RGB at 32 bpp
+// needs no palette. Do not pass just a BITMAPINFOHEADER as LPBITMAPINFO.
+type bitmapInfo struct {
+	Header bitmapHeader
+	Colors [1]uint32
+}
+
 func (d *Desktop) Capture(ctx context.Context, r platform.Rect) (image.Image, error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
@@ -100,11 +107,16 @@ func (d *Desktop) Capture(ctx context.Context, r platform.Rect) (image.Image, er
 		return nil, fmt.Errorf("CreateCompatibleDC: %w", e)
 	}
 	defer gdi.NewProc("DeleteDC").Call(mem)
-	bmp, _, e := gdi.NewProc("CreateCompatibleBitmap").Call(dc, uintptr(r.Width), uintptr(r.Height))
+	info := bitmapInfo{Header: bitmapHeader{Size: uint32(unsafe.Sizeof(bitmapHeader{})), Width: int32(r.Width), Height: -int32(r.Height), Planes: 1, BitCount: 32}}
+	var pixels unsafe.Pointer
+	bmp, _, e := gdi.NewProc("CreateDIBSection").Call(dc, uintptr(unsafe.Pointer(&info)), 0, uintptr(unsafe.Pointer(&pixels)), 0, 0)
 	if bmp == 0 {
-		return nil, fmt.Errorf("CreateCompatibleBitmap: %w", e)
+		return nil, fmt.Errorf("CreateDIBSection (%dx%d): %w", r.Width, r.Height, e)
 	}
 	defer gdi.NewProc("DeleteObject").Call(bmp)
+	if pixels == nil {
+		return nil, fmt.Errorf("CreateDIBSection returned a bitmap without pixel storage")
+	}
 	selectObj := gdi.NewProc("SelectObject")
 	old, _, e := selectObj.Call(mem, bmp)
 	if old == 0 || old == ^uintptr(0) {
@@ -124,27 +136,22 @@ func (d *Desktop) Capture(ctx context.Context, r platform.Rect) (image.Image, er
 	if ok == 0 {
 		return nil, fmt.Errorf("BitBlt: %w", e)
 	}
-	// GetDIBits requires the bitmap not to be selected into any DC.
+	// Synchronize GDI drawing before touching DIB memory on this same locked
+	// OS thread. No DDB conversion/GetDIBits or retry with partial pixels.
+	flushed, _, _ := gdi.NewProc("GdiFlush").Call()
+	if flushed == 0 {
+		return nil, fmt.Errorf("GdiFlush failed while completing screen capture")
+	}
 	restored, _, e := selectObj.Call(mem, old)
 	if restored == 0 || restored == ^uintptr(0) {
 		return nil, fmt.Errorf("restore GDI object: %w", e)
 	}
 	selected = false
-	im := image.NewRGBA(image.Rect(0, 0, r.Width, r.Height))
-	header := bitmapHeader{Size: 40, Width: int32(r.Width), Height: -int32(r.Height), Planes: 1, BitCount: 32}
-	lines, _, e := gdi.NewProc("GetDIBits").Call(dc, bmp, 0, uintptr(r.Height), uintptr(unsafe.Pointer(&im.Pix[0])), uintptr(unsafe.Pointer(&header)), 0)
-	if int(lines) != r.Height {
-		return nil, fmt.Errorf("GetDIBits incomplete: %w", e)
-	}
-	for y := 0; y < r.Height; y++ {
-		if e := ctx.Err(); e != nil {
-			return nil, e
-		}
-		for x := 0; x < r.Width; x++ {
-			i := y*im.Stride + x*4
-			im.Pix[i], im.Pix[i+2] = im.Pix[i+2], im.Pix[i]
-			im.Pix[i+3] = 255
-		}
+	// 32-bpp scan lines are DWORD aligned at any width. Copy to Go-owned
+	// storage before DeleteObject frees the native DIB allocation.
+	im, e := copyDIBPixels(ctx, r.Width, r.Height, unsafe.Slice((*byte)(pixels), r.Width*r.Height*4))
+	if e != nil {
+		return nil, e
 	}
 	if e = d.ready(ctx); e != nil {
 		return nil, e

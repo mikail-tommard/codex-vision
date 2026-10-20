@@ -12,7 +12,7 @@ import (
 )
 
 func TestWin64ABILayout(t *testing.T) {
-	if unsafe.Sizeof(packet{}) != 40 || unsafe.Offsetof(packet{}.Data) != 8 || unsafe.Sizeof(mousePacket{}) != 32 || unsafe.Sizeof(keyPacket{}) != 24 || unsafe.Sizeof(bitmapHeader{}) != 40 || unsafe.Sizeof(monitorInfo{}) != 104 {
+	if unsafe.Sizeof(packet{}) != 40 || unsafe.Offsetof(packet{}.Data) != 8 || unsafe.Sizeof(mousePacket{}) != 32 || unsafe.Sizeof(keyPacket{}) != 24 || unsafe.Sizeof(bitmapHeader{}) != 40 || unsafe.Sizeof(bitmapInfo{}) != 44 || unsafe.Offsetof(bitmapInfo{}.Colors) != 40 || unsafe.Sizeof(monitorInfo{}) != 104 {
 		t.Fatal("Win32 ABI layout mismatch")
 	}
 }

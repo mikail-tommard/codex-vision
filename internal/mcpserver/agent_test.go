@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"example.com/codex-vision/internal/observation"
 	"example.com/codex-vision/internal/platform"
@@ -98,6 +99,63 @@ func agentResult(t *testing.T, r *mcp.CallToolResult) agentData {
 }
 func agentClick(view, id, goal string) map[string]any {
 	return map[string]any{"view_id": view, "steps": []map[string]any{{"action": "click", "target_id": id}}, "expect": map[string]any{"title_contains": goal}, "settle_ms": 100, "wait_ms": 3000}
+}
+
+func TestUnchangedObservePreservesDeliveredImageCoordinates(t *testing.T) {
+	d := agentFixture("Saved")
+	c, svc := agentClient(t, d)
+	region := platform.Rect{X: 20, Y: 30, Width: 200, Height: 120}
+	first := agentResult(t, call(t, c, "desktop_observe", map[string]any{"watch_region": region}, true))
+	nextResult := call(t, c, "desktop_observe", map[string]any{"after_sequence": first.Frame.Sequence, "wait_ms": 0}, true)
+	next := agentResult(t, nextResult)
+	if len(nextResult.Content) != 1 || next.Frame != nil || next.View.ID == first.View.ID {
+		t.Fatal("expected a renewed view without a duplicate image", next)
+	}
+	call(t, c, "desktop_act", map[string]any{"view_id": next.View.ID, "coordinates": "image", "steps": []map[string]any{{"action": "click", "x": 50, "y": 35}}, "expect": map[string]any{"title_contains": "Saved 1"}, "settle_ms": 100, "wait_ms": 3000}, true)
+	actions := d.actions()
+	if len(actions) != 1 || actions[0].X != 70 || actions[0].Y != 65 || svc.metrics.snapshot()["images_returned"] != int64(1) {
+		t.Fatal("mapping changed or extra image returned", actions, svc.metrics.snapshot())
+	}
+}
+
+func TestImageCoordinatesNotInheritedAcrossUnseenState(t *testing.T) {
+	now := time.Now()
+	base := agentView{Window: platform.Window{ID: "w", Process: "app", Title: "tab", Bounds: platform.Rect{Width: 300, Height: 200}}, ObservationID: "o", FocusVersion: 2, Region: platform.Rect{Width: 100, Height: 100}, Expires: now.Add(time.Minute), ImageBounds: platform.Rect{X: 20, Y: 30, Width: 100, Height: 100}, ImageWidth: 100, ImageHeight: 100, ImageSequence: 3}
+	for _, change := range []string{"none", "consumed", "expired", "stopped", "observation", "focus", "region", "window", "title", "sequence", "geometry"} {
+		t.Run(change, func(t *testing.T) {
+			previous := base
+			view := base
+			view.ImageBounds, view.ImageWidth, view.ImageHeight, view.ImageSequence = platform.Rect{}, 0, 0, 0
+			status := observation.Status{State: "running", Sequence: 3}
+			ptr := &previous
+			switch change {
+			case "consumed":
+				ptr = nil
+			case "expired":
+				previous.Expires = now
+			case "stopped":
+				status.State = "stopped"
+			case "observation":
+				view.ObservationID = "new"
+			case "focus":
+				view.FocusVersion++
+			case "region":
+				view.Region.X++
+			case "window":
+				view.Window.ID = "new"
+			case "title":
+				view.Window.Title = "other tab"
+			case "sequence":
+				status.Sequence++
+			case "geometry":
+				view.Window.Bounds.X++
+			}
+			view.inheritImageCoordinates(ptr, status, now)
+			if (view.ImageWidth > 0) != (change == "none") {
+				t.Fatal("unsafe or missing inheritance", view)
+			}
+		})
+	}
 }
 
 func TestUnifiedObserveAndActReturnsNextViewWithoutExtraImage(t *testing.T) {

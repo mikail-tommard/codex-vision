@@ -19,7 +19,7 @@ type DesktopStep struct {
 	Horizontal bool     `json:"horizontal,omitempty"`
 	Key        string   `json:"key,omitempty" jsonschema:"press: canonical ENTER, ESCAPE, PAGEDOWN etc; not Return or Esc"`
 	Keys       []string `json:"keys,omitempty"`
-	Text       string   `json:"text,omitempty"`
+	Text       string   `json:"text,omitempty" jsonschema:"type: 1..4096 Unicode code points; batch total at most 16384 UTF-8 bytes. No automatic splitting or submission"`
 }
 type DesktopBatchArgs struct {
 	Expect         *ExpectedState `json:"expect,omitempty" jsonschema:"Optional exact native UI postcondition; mutually exclusive with ready_when"`
