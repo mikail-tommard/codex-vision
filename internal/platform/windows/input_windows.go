@@ -221,6 +221,7 @@ func (d *Desktop) Execute(ctx context.Context, a platform.Action) (err error) {
 			foreground: func() uintptr { active, _, _ := getForeground.Call(); return active },
 			minimized:  func() bool { iconic, _, _ := user.NewProc("IsIconic").Call(h); return iconic != 0 },
 			restore:    func() bool { accepted, _, _ := user.NewProc("ShowWindowAsync").Call(h, 9); return accepted != 0 }, // SW_RESTORE
+			raise:      func() bool { accepted, _, _ := user.NewProc("BringWindowToTop").Call(h); return accepted != 0 },
 			activate:   func() bool { accepted, _, _ := user.NewProc("SetForegroundWindow").Call(h); return accepted != 0 },
 		})
 	}

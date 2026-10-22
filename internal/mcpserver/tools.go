@@ -119,6 +119,8 @@ func bind[T any](s *mcp.Server, svc *Service, name, desc string, read bool, fn f
 			if def.Properties["action"] != nil {
 				constrain(def)
 				def.Properties["action"].Enum = []any{"click", "move", "scroll", "press", "hotkey", "type"}
+				def.Properties["delay_before_ms"].Minimum = ptr(0.0)
+				def.Properties["delay_before_ms"].Maximum = ptr(1000.0)
 			}
 		}
 	}

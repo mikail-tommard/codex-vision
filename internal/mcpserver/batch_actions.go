@@ -11,15 +11,16 @@ import (
 )
 
 type DesktopStep struct {
-	TargetID   string   `json:"target_id,omitempty" jsonschema:"desktop_act only: short-lived control ID from desktop_observe; do not combine with x/y"`
-	Action     string   `json:"action" jsonschema:"click, move, scroll, press, hotkey or type. Only batch predictable steps; do not guess targets after navigation"`
-	X          int      `json:"x,omitempty"`
-	Y          int      `json:"y,omitempty"`
-	Delta      int      `json:"delta,omitempty" jsonschema:"scroll: nonzero multiple of 120, -1200..1200; negative scrolls down"`
-	Horizontal bool     `json:"horizontal,omitempty"`
-	Key        string   `json:"key,omitempty" jsonschema:"press: canonical ENTER, ESCAPE, PAGEDOWN etc; not Return or Esc"`
-	Keys       []string `json:"keys,omitempty"`
-	Text       string   `json:"text,omitempty" jsonschema:"type: 1..4096 Unicode code points; batch total at most 16384 UTF-8 bytes. No automatic splitting or submission"`
+	DelayBeforeMS int      `json:"delay_before_ms,omitempty" jsonschema:"Local pause before this predictable step, 0..1000ms; batch total at most 2000ms. Rechecks focus after waiting. Not a readiness or success check"`
+	TargetID      string   `json:"target_id,omitempty" jsonschema:"desktop_act only: short-lived control ID from desktop_observe; do not combine with x/y"`
+	Action        string   `json:"action" jsonschema:"click, move, scroll, press, hotkey or type. Only batch predictable steps; do not guess targets after navigation"`
+	X             int      `json:"x,omitempty"`
+	Y             int      `json:"y,omitempty"`
+	Delta         int      `json:"delta,omitempty" jsonschema:"scroll: nonzero multiple of 120, -1200..1200; negative scrolls down"`
+	Horizontal    bool     `json:"horizontal,omitempty"`
+	Key           string   `json:"key,omitempty" jsonschema:"press: canonical ENTER, ESCAPE, PAGEDOWN etc; not Return or Esc"`
+	Keys          []string `json:"keys,omitempty"`
+	Text          string   `json:"text,omitempty" jsonschema:"type: 1..4096 Unicode code points; batch total at most 16384 UTF-8 bytes. No automatic splitting or submission"`
 }
 type DesktopBatchArgs struct {
 	Expect         *ExpectedState `json:"expect,omitempty" jsonschema:"Optional exact native UI postcondition; mutually exclusive with ready_when"`
@@ -63,6 +64,16 @@ func (v *Service) prepareBatchOptions(a *DesktopBatchArgs) error {
 	}
 	if len(a.Steps) < 1 || len(a.Steps) > 12 {
 		return fmt.Errorf("steps must contain 1..12 actions")
+	}
+	delayMS := 0
+	for i, step := range a.Steps {
+		if step.DelayBeforeMS < 0 || step.DelayBeforeMS > 1000 {
+			return fmt.Errorf("step %d: delay_before_ms must be 0..1000", i+1)
+		}
+		delayMS += step.DelayBeforeMS
+	}
+	if delayMS > 2000 {
+		return fmt.Errorf("batch delays exceed 2000ms")
 	}
 	if a.SettleMS == 0 {
 		a.SettleMS = 350
@@ -216,9 +227,18 @@ func (v *Service) runDesktopBatch(ctx context.Context, a DesktopBatchArgs, befor
 	preflightMS := time.Since(toolStarted).Milliseconds()
 	stepMS := []int64{}
 	var pointerMS int64
+	var delayMS int64
 	pointerSteps := 0
 	interaction, status, frame, err := v.Observer.ActAndWait(ctx, a.ID, observation.ActionWaitOptions{Settle: time.Duration(a.SettleMS) * time.Millisecond, Wait: time.Duration(a.WaitMS) * time.Millisecond, Ready: readyCheck, SingleChange: a.WaitFor == "change", MetadataOnReady: a.ResultMode == "auto", SuppressTimeoutImage: !a.ImageOnTimeout}, func(ctx context.Context) error {
 		for index, step := range steps {
+			if delay := a.Steps[index].DelayBeforeMS; delay > 0 {
+				started := time.Now()
+				e := waitBatchDelay(ctx, time.Duration(delay)*time.Millisecond)
+				delayMS += time.Since(started).Milliseconds()
+				if e != nil {
+					return e
+				}
+			}
 			if e := check(ctx); e != nil {
 				return e
 			}
@@ -277,7 +297,7 @@ func (v *Service) runDesktopBatch(ctx context.Context, a DesktopBatchArgs, befor
 	} else {
 		meta["verification"] = verificationReport{Scope: "not configured; visual changes or readiness alone do not verify application outcome"}
 	}
-	meta["timings"] = map[string]any{"cursor_path_ms": pointerMS, "measured_pointer_steps": pointerSteps, "preflight_ms": preflightMS, "step_ms": stepMS, "tool_ms": time.Since(toolStarted).Milliseconds(), "note": "local server only; step time includes permission and window checks, not model/network time"}
+	meta["timings"] = map[string]any{"cursor_path_ms": pointerMS, "measured_pointer_steps": pointerSteps, "preflight_ms": preflightMS, "step_ms": stepMS, "local_delay_ms": delayMS, "tool_ms": time.Since(toolStarted).Milliseconds(), "note": "local server only; step time includes permission and window checks, not model/network time"}
 	if expected != nil {
 		meta["readiness"] = readinessReport{Mode: "expected_state", Matched: expected.report.Matched}
 	} else if guard != nil {
@@ -293,4 +313,15 @@ func (v *Service) runDesktopBatch(ctx context.Context, a DesktopBatchArgs, befor
 	updated.Content = append(updated.Content, out.Content[1:]...)
 	updated.IsError = err != nil
 	return updated, nil
+}
+
+func waitBatchDelay(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return ctx.Err()
+	}
 }
