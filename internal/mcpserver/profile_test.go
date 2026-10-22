@@ -29,9 +29,9 @@ func TestCompactCatalogAndWireResponses(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := 30
+			want := 29
 			if profile == "compact" {
-				want = 13
+				want = 12
 			}
 			if len(listed.Tools) != want {
 				t.Fatalf("got %d tools, want %d", len(listed.Tools), want)

@@ -68,7 +68,7 @@ func call(t *testing.T, c *mcp.ClientSession, name string, args any, ok bool) *m
 func TestMCPObserveFlow(t *testing.T) {
 	c, _ := connect(t, config.Default())
 	ts, e := c.ListTools(context.Background(), nil)
-	if e != nil || len(ts.Tools) != 30 {
+	if e != nil || len(ts.Tools) != 29 {
 		t.Fatal(ts, e)
 	}
 	for _, tool := range ts.Tools {
