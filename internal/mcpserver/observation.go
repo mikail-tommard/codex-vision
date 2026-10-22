@@ -163,6 +163,11 @@ func (v *Service) observationSample(ctx context.Context, a ObserveStartArgs) (ob
 	if err != nil {
 		return observation.Sample{}, err
 	}
+	if v.Advisor != nil && v.Advisor.Active() {
+		_, _, pinned, _, focusErr := v.Observer.FocusState(v.Observer.Status().ID)
+		active, activeErr := v.Desktop.Active(ctx)
+		v.Advisor.MarkVisibility(focusErr == nil && activeErr == nil && pinned != nil && sameAgentWindow(*pinned, active) && pinned.Title == active.Title)
+	}
 	sample := observation.Sample{Image: im, Bounds: bounds}
 	if d, ok := v.Desktop.(platform.CursorReporter); ok {
 		if point, err := d.CursorPosition(ctx); err == nil {

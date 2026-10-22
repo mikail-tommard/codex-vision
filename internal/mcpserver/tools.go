@@ -88,6 +88,14 @@ func bind[T any](s *mcp.Server, svc *Service, name, desc string, read bool, fn f
 		panic(err)
 	}
 	constrain(schema)
+	if name == "advisor" {
+		schema.Properties["action"].Enum = []any{"start", "publish", "status", "pause", "resume", "stop"}
+		for field, limit := range map[string]int{"title": 80, "recommendation": 240, "reason": 600, "alternative": 300} {
+			schema.Properties[field].MaxLength = ptr(limit)
+		}
+		schema.Properties["urgency"].Enum = []any{"", "normal", "important", "critical"}
+		schema.Properties["ttl_seconds"].AnyOf = []*jsonschema.Schema{{Const: ptr[any](float64(0))}, {Minimum: ptr(3.0), Maximum: ptr(120.0)}}
+	}
 	if name == "ui_fill_batch" {
 		fields := schema.Properties["fields"]
 		fields.MinItems = ptr(1)
@@ -156,6 +164,9 @@ func bind[T any](s *mcp.Server, svc *Service, name, desc string, read bool, fn f
 			return fail(lockErr), nil, nil
 		}
 		defer release()
+		if inputTool(name) && svc.Advisor.Active() {
+			return fail(fmt.Errorf("advisor is observation-only; stop advisor explicitly before desktop input")), nil, nil
+		}
 		svc.Observer.Touch()
 		recovery := svc.recovery.status()
 		if recovery.Required && (inputTool(name) || name == "observation_next" || name == "observation_start" || name == "desktop_observe") {

@@ -59,7 +59,7 @@ func TestRealStdioProcess(t *testing.T) {
 	}
 	defer session.Close()
 	tools, e := session.ListTools(ctx, nil)
-	if e != nil || len(tools.Tools) != 29 {
+	if e != nil || len(tools.Tools) != 30 {
 		t.Fatal(e)
 	}
 	r, e := session.CallTool(ctx, &mcp.CallToolParams{Name: "screen_capture", Arguments: map[string]any{"monitor_id": "mock-primary", "max_width": 160}})

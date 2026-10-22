@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"example.com/codex-vision/internal/advisor"
 	"example.com/codex-vision/internal/config"
 	"example.com/codex-vision/internal/observation"
 	"example.com/codex-vision/internal/platform"
@@ -12,7 +13,7 @@ import (
 	"time"
 )
 
-const serverVersion = "0.13.6"
+const serverVersion = "0.14.0"
 
 type Service struct {
 	views    agentViews
@@ -24,6 +25,7 @@ type Service struct {
 	Log      *slog.Logger
 	recovery recoveryGuard
 	Observer *observation.Manager
+	Advisor  *advisor.Manager
 	uiMu     sync.Mutex
 	ui       *uiSnapshot
 	uiOps    chan struct{}
@@ -40,6 +42,7 @@ func New(c config.Config, d platform.Desktop, l *slog.Logger) (*mcp.Server, *Ser
 	}
 	svc := &Service{started: time.Now(), Desktop: d, Config: c, Session: safety.New(c, d, l), Log: l, uiOps: make(chan struct{}, 1), inputs: make(chan struct{}, 1), reads: make(chan struct{}, 1)}
 	svc.Observer = observation.New(nil, svc.Session.ObservationError)
+	svc.Advisor = advisor.New(svc.advisorSource)
 	s := mcp.NewServer(&mcp.Implementation{Name: "codex-vision", Version: serverVersion}, &mcp.ServerOptions{Instructions: agentInstructions})
 	svc.register(s)
 	svc.registerObservation(s)
@@ -50,6 +53,7 @@ func New(c config.Config, d platform.Desktop, l *slog.Logger) (*mcp.Server, *Ser
 	svc.registerUIBatch(s)
 	svc.registerUIWait(s)
 	svc.registerAgent(s)
+	svc.registerAdvisor(s)
 	return s, svc
 }
 func (s *Service) Run(ctx context.Context, server *mcp.Server) error {
@@ -62,6 +66,9 @@ func (s *Service) Run(ctx context.Context, server *mcp.Server) error {
 func (s *Service) Close() {
 	s.Session.Stop()
 	s.Observer.Close()
+	if s.Advisor != nil {
+		s.Advisor.Close()
+	}
 	s.uiMu.Lock()
 	s.ui = nil
 	s.uiMu.Unlock()

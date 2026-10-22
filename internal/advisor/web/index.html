@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="description" content="Локальные подсказки Codex Vision. Вы играете — советник помогает выбрать следующий ход.">
+  <meta name="color-scheme" content="dark light">
+  <title>Vision Coach · Игровой советник</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="app.js"></script>
+</head>
+<body>
+<a class="skip" href="#advice">К подсказке</a>
+<div class="shell">
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="Vision Coach, главная"><span class="brand-mark" aria-hidden="true">◈</span><span>VISION<span class="brand-sub">COACH</span></span></a>
+    <div class="header-actions"><button id="expand" class="text-button" hidden>Развернуть</button><span class="local-badge"><span class="dot"></span>Локально</span><button id="theme" class="icon-button" aria-label="Сменить тему" title="Тема: системная">◐</button></div>
+  </header>
+  <main>
+    <section class="intro" aria-labelledby="page-title"><p class="eyebrow">ТВОЯ ИГРА. ВТОРОЙ ВЗГЛЯД.</p><h1 id="page-title">Следующий ход — за тобой.</h1><p class="intro-copy">Короткие подсказки в нужный момент.<br>Ты управляешь игрой, советник помогает с решением.</p></section>
+    <section id="pairing" class="pairing" hidden aria-labelledby="pair-title"><h2 id="pair-title">Подключить эту панель</h2><p>Открой ссылку, которую вернул советник, или вставь ключ из её части после #.</p><form id="pair-form"><label for="pair-token">Ключ подключения</label><input id="pair-token" type="password" autocomplete="off" spellcheck="false" required minlength="64" maxlength="64"><button class="button primary" type="submit">Подключить</button></form></section>
+    <div class="workspace" id="workspace">
+      <article id="advice" class="advice-card is-stale" tabindex="-1" aria-labelledby="recommendation">
+        <div class="card-header"><span class="eyebrow">СЛЕДУЮЩЕЕ ДЕЙСТВИЕ</span><span class="state-pill" id="state" role="status"><span class="dot"></span><span id="state-label">Подключение</span></span></div>
+        <div class="recommendation-wrap"><div id="recommendation-icon" class="move-icon" aria-hidden="true">↗</div><h2 id="recommendation">Готовимся к игре</h2><p id="context-line" class="context-line">Первая подсказка появится после анализа области игры.</p></div>
+        <div class="divider"></div>
+        <section class="detail"><h3><span class="detail-marker" aria-hidden="true">01</span>Почему этот ход</h3><p id="reason">Советник объяснит рекомендацию коротко и по делу.</p></section>
+        <section class="detail alternative" id="alternative-section" hidden><h3><span class="detail-marker" aria-hidden="true">02</span>Другой вариант</h3><p id="alternative"></p></section>
+        <div class="card-footer"><span class="read-only"><span aria-hidden="true">◇</span> Только подсказки</span><time id="updated">Ещё нет обновлений</time></div>
+        <p id="announcement" class="sr-only" aria-live="polite" aria-atomic="true"></p>
+      </article>
+      <aside class="sidebar" aria-label="Управление советником">
+        <section class="control-card"><p class="eyebrow">ТВОЙ ПОМОЩНИК</p><h2>Рядом. Без лишнего.</h2><p class="muted">Закрепи подсказку поверх игры или оставь панель на втором экране.</p><button id="float" class="button primary"><span aria-hidden="true">▣</span>Поверх игры</button><button id="compact" class="button secondary" aria-pressed="false">Компактный вид</button><p id="floating-note" class="small">Плавающее окно доступно в поддерживаемых браузерах. Иначе откроется отдельное окно.</p></section>
+        <section class="control-card"><div class="control-row"><div><h2 class="small-heading">Важные события</h2><p class="small">Уведомления на этом экране</p></div><button id="notifications" class="toggle" role="switch" aria-checked="false" aria-label="Локальные уведомления"><span></span></button></div><div class="divider"></div><div class="session-row"><span><span class="dot"></span><span id="session-label">Советник подключается</span></span><button id="pause" class="text-button" disabled>Пауза</button></div></section>
+        <section class="footnote"><span aria-hidden="true">◎</span><p>Подсказка меняется вместе с ситуацией. Если сцена изменилась, дождись обновления.<br><strong>Панель держи за пределами области наблюдения.</strong></p></section>
+      </aside>
+    </div>
+    <div class="bottom-bar"><span id="connection" role="status">Устанавливаем локальное соединение</span><span>Никаких автоматических ходов</span></div>
+    <noscript><p class="pairing">Для обновления подсказок включи JavaScript. Эта панель работает только с локальным сервером.</p></noscript>
+  </main>
+  <footer class="site-footer"><span>CODEX VISION</span><span>Наблюдает. Подсказывает. Ты решаешь.</span></footer>
+</div>
+<div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>
