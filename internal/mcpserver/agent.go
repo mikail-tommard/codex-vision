@@ -25,6 +25,10 @@ type agentView struct {
 	ImageBounds             platform.Rect
 	ImageWidth, ImageHeight int
 	ImageSequence           uint64
+	ObservedSequence        uint64
+	ObservedControls        platform.ControlSnapshot
+	ControlsAvailable       bool
+	Context                 *platform.UIContext
 }
 type agentViews struct {
 	mu      sync.Mutex
@@ -207,6 +211,7 @@ func (v *Service) attachAgentView(ctx context.Context, w platform.Window, region
 	}
 	status := v.Observer.Status()
 	view := &agentView{ID: viewID, Window: w, ObservationID: status.ID, FocusVersion: status.FocusVersion, Region: region, Expires: time.Now().Add(time.Minute), Controls: map[string]platform.UIControl{}, MaxNodes: maxNodes, IncludeControls: includeControls}
+	view.ObservedSequence = status.Sequence
 	meta := out.StructuredContent.(map[string]any)
 	if f, ok := meta["frame"].(*observation.Frame); ok && f != nil {
 		view.ImageBounds = f.Bounds
@@ -229,6 +234,19 @@ func (v *Service) attachAgentView(ctx context.Context, w platform.Window, region
 		if e != nil {
 			meta["controls_status"] = map[string]any{"available": false, "error": e.Error(), "failure": classifyFailure(e)}
 		} else {
+			view.ObservedControls = raw
+			if raw.Context != nil {
+				context := *raw.Context
+				view.Context = &context
+			}
+			view.ObservedControls.Controls = append([]platform.UIControl(nil), raw.Controls...)
+			for i := range view.ObservedControls.Controls {
+				if enabled := raw.Controls[i].Enabled; enabled != nil {
+					value := *enabled
+					view.ObservedControls.Controls[i].Enabled = &value
+				}
+			}
+			view.ControlsAvailable = true
 			meta["controls_status"] = map[string]any{"available": true, "truncated": raw.Truncated, "omitted": max(0, len(raw.Controls)-64)}
 			for _, c := range raw.Controls[:min(64, len(raw.Controls))] {
 				item := map[string]any{"label": c.Label, "role": c.Role, "enabled": c.Enabled, "bounds": c.Bounds}
@@ -256,6 +274,13 @@ func (v *Service) attachAgentView(ctx context.Context, w platform.Window, region
 				raw, e := reader.ReadUI(ctx, w, maxNodes)
 				if e != nil {
 					return e
+				}
+				if raw.Context != nil {
+					if !platform.MatchUIContext(view.Context, raw.Context) {
+						return fmt.Errorf("stale native UI context during field snapshot")
+					}
+					context := *raw.Context
+					view.Context = &context
 				}
 				after, e := v.attentionWindow(ctx, w.ID)
 				if e != nil {
@@ -288,7 +313,11 @@ func (v *Service) attachAgentView(ctx context.Context, w platform.Window, region
 		return nil, err
 	}
 	meta["window"] = decorated[0]
+	view.Window = after
 	meta["view"] = map[string]any{"view_id": view.ID, "expires_at": view.Expires.UTC(), "observation_id": view.ObservationID, "watch_region": view.Region, "capture_bounds": status.CaptureBounds, "image_coordinates_available": view.ImageWidth > 0, "atomic_ui_snapshot": false}
+	if view.Context != nil {
+		meta["view"].(map[string]any)["context_scope"] = view.Context.Kind
+	}
 	if view.ImageWidth > 0 {
 		meta["view"].(map[string]any)["image_sequence"] = view.ImageSequence
 	}
@@ -390,12 +419,24 @@ func (v *Service) desktopAct(ctx context.Context, a DesktopActArgs) (*mcp.CallTo
 	if !sameAgentWindow(active, view.Window) {
 		return nil, fmt.Errorf("stale view window geometry or process; call desktop_observe")
 	}
+	if active.Title != view.Window.Title {
+		return nil, fmt.Errorf("stale view: window title changed; call desktop_observe")
+	}
+	usesCoordinates := false
+	for _, s := range a.Steps {
+		if (s.Action == "click" || s.Action == "move") && s.TargetID == "" && s.Target == nil {
+			usesCoordinates = true
+		}
+	}
+	if usesCoordinates && state.Sequence != view.ObservedSequence {
+		return nil, fmt.Errorf("stale view: significant visual state changed before coordinate input")
+	}
 	steps := append([]DesktopStep(nil), a.Steps...)
 	refs := map[int]platform.UIControl{}
 	var raw platform.ControlSnapshot
 	needControls := false
 	for _, s := range steps {
-		if s.TargetID != "" {
+		if s.TargetID != "" || s.Target != nil {
 			needControls = true
 		}
 	}
@@ -410,17 +451,41 @@ func (v *Service) desktopAct(ctx context.Context, a DesktopActArgs) (*mcp.CallTo
 	}
 	for i := range steps {
 		s := &steps[i]
-		if s.TargetID != "" {
+		s.expectedContext = view.Context
+		if s.TargetID != "" || s.Target != nil {
 			if (s.Action != "click" && s.Action != "move") || s.X != 0 || s.Y != 0 {
 				return nil, fmt.Errorf("target_id requires click/move without x/y")
 			}
-			target, ok := view.Controls[s.TargetID]
-			if !ok {
-				return nil, fmt.Errorf("stale or unknown target_id")
+			var target platform.UIControl
+			if s.Target != nil {
+				if !view.ControlsAvailable {
+					return nil, fmt.Errorf("control metadata unavailable in view; call desktop_observe with include_controls=true")
+				}
+				var index int
+				target, index, err = v.selectControl(view.ObservedControls, *s.Target, view.Window)
+				if err != nil {
+					return nil, err
+				}
+				if index >= 64 {
+					return nil, fmt.Errorf("target not delivered in this view; inspect a smaller control tree")
+				}
+				current, _, e := v.selectControl(raw, *s.Target, active)
+				if e != nil {
+					return nil, e
+				}
+				if !sameControl(target, current) {
+					return nil, fmt.Errorf("stale target: semantic control moved or changed")
+				}
+			} else {
+				var ok bool
+				target, ok = view.Controls[s.TargetID]
+				if !ok {
+					return nil, fmt.Errorf("stale or unknown target_id")
+				}
 			}
 			matches := 0
 			for _, c := range raw.Controls {
-				if c.Role == target.Role && c.Label == target.Label && c.Bounds == target.Bounds && c.Enabled != nil && *c.Enabled {
+				if sameControl(target, c) {
 					matches++
 				}
 			}
@@ -428,9 +493,13 @@ func (v *Service) desktopAct(ctx context.Context, a DesktopActArgs) (*mcp.CallTo
 				return nil, fmt.Errorf("stale or ambiguous target: matched %d current controls", matches)
 			}
 			refs[i] = target
+			s.expectedControl = &target
+			s.uniqueSelector = s.Target != nil
+			s.labelOnlySelector = s.Target != nil && s.Target.Role == ""
 			s.X = target.Bounds.X + target.Bounds.Width/2
 			s.Y = target.Bounds.Y + target.Bounds.Height/2
 			s.TargetID = ""
+			s.Target = nil
 		} else if a.Coordinates == "image" && (s.Action == "click" || s.Action == "move") {
 			if view.ImageWidth == 0 || s.X < 0 || s.Y < 0 || s.X >= view.ImageWidth || s.Y >= view.ImageHeight {
 				return nil, fmt.Errorf("image coordinates outside the image returned in this view")
@@ -451,9 +520,21 @@ func (v *Service) desktopAct(ctx context.Context, a DesktopActArgs) (*mcp.CallTo
 			if current.Truncated {
 				return fmt.Errorf("stale control: current tree incomplete before step %d", index+1)
 			}
+			if !platform.MatchUIContext(view.Context, current.Context) {
+				return fmt.Errorf("stale native UI context before step %d", index+1)
+			}
+			if selector := a.Steps[index].Target; selector != nil {
+				selected, _, e := v.selectControl(current, *selector, view.Window)
+				if e != nil {
+					return e
+				}
+				if !sameControl(target, selected) {
+					return fmt.Errorf("stale semantic target before step %d", index+1)
+				}
+			}
 			count := 0
 			for _, c := range current.Controls {
-				if c.Role == target.Role && c.Label == target.Label && c.Bounds == target.Bounds && c.Enabled != nil && *c.Enabled {
+				if sameControl(target, c) {
 					count++
 				}
 			}
@@ -465,6 +546,19 @@ func (v *Service) desktopAct(ctx context.Context, a DesktopActArgs) (*mcp.CallTo
 		// succeeded. Consume immediately before the first input attempt. Never
 		// restore after that point, even on a timeout or partial delivery.
 		if !consumed {
+			current, e := v.agentWindow(ctx, view.Window.ID)
+			if e != nil {
+				return e
+			}
+			if current.Title != view.Window.Title {
+				return fmt.Errorf("stale view: title changed before first input")
+			}
+			// A requested focus-region change creates its own new baseline. Do
+			// not mistake that for an external change under the original scope.
+			now := v.Observer.Status()
+			if usesCoordinates && now.FocusVersion == view.FocusVersion && now.Sequence != view.ObservedSequence {
+				return fmt.Errorf("stale view: visual state changed during preflight")
+			}
 			v.views.mu.Lock()
 			if v.views.current != view || time.Now().After(view.Expires) {
 				v.views.mu.Unlock()
@@ -482,6 +576,13 @@ func (v *Service) desktopAct(ctx context.Context, a DesktopActArgs) (*mcp.CallTo
 	meta := out.StructuredContent.(map[string]any)
 	meta["view_consumed"] = consumed
 	meta["preflight_refocus_attempted"] = refocused
+	if verified, ok := meta["verification"].(verificationReport); ok && verified.Configured && verified.Matched && !out.IsError {
+		for _, step := range a.Steps {
+			if step.Target != nil {
+				v.recordLocator(view.Window, view.ObservedControls, *step.Target)
+			}
+		}
+	}
 	out = replaceMetadata(out, meta)
 	interaction, _ := meta["interaction"].(observation.ActionWaitResult)
 	if !out.IsError && interaction.Posted && !interaction.TimedOut {

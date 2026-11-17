@@ -127,6 +127,20 @@ func bind[T any](s *mcp.Server, svc *Service, name, desc string, read bool, fn f
 	if name == "ui_wait" {
 		schema.Properties["condition"].Enum = []any{"field_ready", "field_present", "field_absent", "window_active", "window_title"}
 	}
+	if name == "workflow_control" {
+		schema.Properties["action"].Enum = []any{"start", "status", "cancel", "resume"}
+		schema.Properties["detail"].Enum = []any{"full", "summary"}
+		schema.Properties["steps"].MaxItems = ptr(50)
+		schema.Properties["wait_ms"].Minimum = ptr(0.0)
+		schema.Properties["wait_ms"].Maximum = ptr(30000.0)
+		schema.Properties["after_event"].Minimum = ptr(0.0)
+		for _, def := range schema.Defs {
+			constrain(def)
+		}
+	}
+	if name == "ui_memory_control" {
+		schema.Properties["action"].Enum = []any{"status", "clear"}
+	}
 	if name == "mouse_move" {
 		schema.Properties["duration_ms"].Minimum = ptr(0.0)
 	}
@@ -149,6 +163,7 @@ func bind[T any](s *mcp.Server, svc *Service, name, desc string, read bool, fn f
 		}()
 		started := time.Now()
 		defer func() { svc.metrics.record(name, out, time.Since(started)) }()
+		defer func() { out = withActionOutcome(name, out) }()
 		ctx, cancel := context.WithTimeout(ctx, time.Duration(svc.Config.TimeoutMS)*time.Millisecond)
 		defer cancel()
 		release, lockErr := svc.lockTool(ctx, name)
@@ -160,6 +175,16 @@ func bind[T any](s *mcp.Server, svc *Service, name, desc string, read bool, fn f
 		recovery := svc.recovery.status()
 		if recovery.Required && (inputTool(name) || name == "observation_next" || name == "observation_start" || name == "desktop_observe") {
 			return recoveryResult(recovery), nil, nil
+		}
+		// The input lane is held. A separate input attempt invalidates the
+		// previous unified view even if it later fails: delivery can be partial
+		// and unchanged window geometry does not prove unchanged UI state.
+		// desktop_act owns its consume-before-input lifecycle, including its
+		// single authorized preflight focus and validation-only failures.
+		if inputTool(name) && name != "desktop_act" {
+			svc.views.mu.Lock()
+			svc.views.current = nil
+			svc.views.mu.Unlock()
 		}
 		var err error
 		if read && (name == "observation_next" || name == "ui_wait" || name == "desktop_observe") {

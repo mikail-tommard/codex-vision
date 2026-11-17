@@ -9,6 +9,11 @@ import (
 )
 
 type Config struct {
+	Workflows         bool     `json:"workflows"`
+	UIMemoryDirectory string   `json:"ui_memory_directory"`
+	UIMemoryNamespace string   `json:"ui_memory_namespace"`
+	UIMemoryTTLHours  int      `json:"ui_memory_ttl_hours"`
+	MeasureWireBytes  bool     `json:"measure_wire_bytes"`
 	ToolProfile       string   `json:"tool_profile"`
 	CursorMode        string   `json:"cursor_mode"`
 	Mode              string   `json:"mode"`
@@ -60,6 +65,16 @@ func Load(path string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	if c.UIMemoryDirectory != "" {
+		if !filepath.IsAbs(c.UIMemoryDirectory) || c.UIMemoryTTLHours < 1 || c.UIMemoryTTLHours > 720 || len(c.UIMemoryNamespace) > 64 {
+			return fmt.Errorf("UI memory requires an absolute private directory, retention 1..720 hours and namespace up to 64 bytes")
+		}
+		for _, r := range c.UIMemoryNamespace {
+			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+				return fmt.Errorf("UI memory namespace must contain only letters, digits, underscore or hyphen")
+			}
+		}
+	}
 	if c.ToolProfile != "" && c.ToolProfile != "compact" && c.ToolProfile != "full" {
 		return fmt.Errorf("tool_profile must be compact or full")
 	}

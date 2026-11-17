@@ -225,12 +225,21 @@ func (d *Desktop) Execute(ctx context.Context, a platform.Action) (err error) {
 	case "mouse_drag":
 		return d.drag(ctx, a)
 	case "keyboard_type":
+		if err := d.validateActionContext(ctx, a); err != nil {
+			return err
+		}
 		return d.typeText(ctx, a.Text)
 	case "keyboard_press", "keyboard_hotkey":
+		if err := d.validateActionContext(ctx, a); err != nil {
+			return err
+		}
 		return d.keys(ctx, a.Keys)
 	case "mouse_move":
-		_, err := d.movePointer(ctx, a)
-		return err
+		target, err := d.movePointer(ctx, a)
+		if err != nil {
+			return err
+		}
+		return d.validateUITarget(ctx, a, target)
 	case "mouse_scroll":
 		if a.Delta%120 != 0 {
 			return fmt.Errorf("macOS line scroll requires delta to be a multiple of 120")
@@ -260,6 +269,9 @@ func (d *Desktop) Execute(ctx context.Context, a platform.Action) (err error) {
 			return fmt.Errorf("scroll window identity is stale; refresh window_list")
 		}
 		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := d.validateActionContext(ctx, a); err != nil {
 			return err
 		}
 		ok = C.cv_event(2, 0, 0, C.int(a.Delta/120), h, C.uint32_t(nativeID), C.int(pid), &message)

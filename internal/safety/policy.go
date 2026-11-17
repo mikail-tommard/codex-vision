@@ -213,6 +213,31 @@ func (s *Session) Execute(ctx context.Context, a platform.Action) (err error) {
 			}
 		}
 	}
+	if a.ContextExpected != nil {
+		reader, ok := s.desk.(platform.UIContextReader)
+		if !ok {
+			return fmt.Errorf("native UI context verification unsupported")
+		}
+		current, e := reader.ReadUIContext(ctx, w)
+		if e != nil {
+			return e
+		}
+		if !platform.MatchUIContext(a.ContextExpected, &current) {
+			return fmt.Errorf("stale native UI context after approval; input refused")
+		}
+		active, e := s.desk.Active(ctx)
+		if e != nil {
+			return e
+		}
+		if active.ID != w.ID || !processEqual(active.Process, w.Process) || active.Bounds != w.Bounds || active.Title != w.Title {
+			return fmt.Errorf("foreground changed during native UI context verification")
+		}
+	}
+	if a.ControlExpected != nil {
+		if err := s.checkControl(ctx, a, w); err != nil {
+			return err
+		}
+	}
 	s.mu.Lock()
 	err = s.checkStopLocked()
 	s.mu.Unlock()
@@ -228,6 +253,46 @@ func (s *Session) Execute(ctx context.Context, a platform.Action) (err error) {
 		a.WindowID = w.ID
 	}
 	return s.desk.Execute(ctx, a)
+}
+
+// Local review can last long enough for a same-window control to change without
+// affecting foreground geometry. Revalidate AFTER approval, inside the sole
+// input gate, so semantic targeting cannot bypass that gap.
+func (s *Session) checkControl(ctx context.Context, a platform.Action, w platform.Window) error {
+	reader, ok := s.desk.(platform.ControlReader)
+	if !ok || (a.Tool != "mouse_click" && a.Tool != "mouse_move") || a.ControlMaxNodes < 1 || a.ControlMaxNodes > 2000 {
+		return fmt.Errorf("unsupported control verification before input")
+	}
+	raw, err := reader.ReadControls(ctx, w, a.ControlMaxNodes)
+	if err != nil {
+		return err
+	}
+	if raw.Truncated || len(raw.Controls) > a.ControlMaxNodes {
+		return fmt.Errorf("incomplete control evidence before input")
+	}
+	if !platform.MatchUIContext(a.ContextExpected, raw.Context) {
+		return fmt.Errorf("stale native UI context during control verification")
+	}
+	target, matches, selectors := a.ControlExpected, 0, 0
+	for _, c := range raw.Controls {
+		if c.Label == target.Label && (a.ControlLabelOnly || c.Role == target.Role) {
+			selectors++
+		}
+		if platform.MatchControl(*target, c) {
+			matches++
+		}
+	}
+	if matches != 1 || (a.ControlUniqueSelector && selectors != 1) || !w.Bounds.Includes(target.Bounds) || !target.Bounds.Contains(a.X, a.Y) {
+		return fmt.Errorf("stale or ambiguous control after approval; input refused")
+	}
+	after, err := s.desk.Active(ctx)
+	if err != nil {
+		return err
+	}
+	if after.ID != w.ID || !processEqual(after.Process, w.Process) || after.Bounds != w.Bounds || after.Title != w.Title {
+		return fmt.Errorf("foreground window changed during final control verification")
+	}
+	return ctx.Err()
 }
 
 func processEqual(a, b string) bool { return platform.ProcessEqual(a, b) }

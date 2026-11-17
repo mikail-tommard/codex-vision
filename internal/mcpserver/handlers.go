@@ -60,7 +60,9 @@ func (s *Service) capture(ctx context.Context, r platform.Rect, monitor, format 
 	if e := vision.Validate(image.Rect(0, 0, r.Width, r.Height)); e != nil {
 		return nil, e
 	}
+	captureStarted := time.Now()
 	im, e := s.Desktop.Capture(ctx, r)
+	s.performance.record("capture", captureStarted)
 	if e != nil {
 		return nil, e
 	}
@@ -90,6 +92,7 @@ func (s *Service) capture(ctx context.Context, r platform.Rect, monitor, format 
 }
 func (s *Service) action(ctx context.Context, a platform.Action) (*mcp.CallToolResult, error) {
 	started := time.Now()
+	defer s.performance.record("action", started)
 	if s.Desktop.Name() == "macos-quartz" {
 		a.Metrics = &platform.InputMetrics{}
 	}

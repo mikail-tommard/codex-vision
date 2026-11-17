@@ -111,7 +111,7 @@ func (v *Service) fillBatch(ctx context.Context, id string, fields []UIFieldValu
 		}
 		if err == nil {
 			report.Fields[i].MayHaveChanged = true
-			_, err = v.action(ctx, platform.Action{Tool: "ui_fill", WindowID: snapshot.Window.ID, Text: fields[i].Text, UIExpected: &target})
+			_, err = v.action(ctx, platform.Action{Tool: "ui_fill", WindowID: snapshot.Window.ID, Text: fields[i].Text, UIExpected: &target, ContextExpected: snapshot.Context})
 		}
 		if err != nil {
 			report.OK = false

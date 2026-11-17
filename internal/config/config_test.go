@@ -88,3 +88,26 @@ func TestCursorMode(t *testing.T) {
 		t.Fatal("invalid cursor mode accepted")
 	}
 }
+
+func TestAutonomyFlagsAndMemoryValidation(t *testing.T) {
+	c := Default()
+	if c.Workflows || c.MeasureWireBytes || c.UIMemoryDirectory != "" {
+		t.Fatal("new features enabled implicitly")
+	}
+	c.UIMemoryDirectory, c.UIMemoryTTLHours = filepath.Join(t.TempDir(), "private"), 24
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, alter := range []func(*Config){
+		func(c *Config) { c.UIMemoryDirectory = "relative" },
+		func(c *Config) { c.UIMemoryTTLHours = 0 },
+		func(c *Config) { c.UIMemoryTTLHours = 721 },
+		func(c *Config) { c.UIMemoryNamespace = "../another-session" },
+	} {
+		bad := c
+		alter(&bad)
+		if bad.Validate() == nil {
+			t.Fatal("unsafe memory configuration accepted", bad)
+		}
+	}
+}

@@ -40,14 +40,8 @@ func (v *Service) prepareExpectation(ctx context.Context, w platform.Window, s *
 	if s == nil {
 		return nil, nil
 	}
-	if (s.TitleContains == "") == (s.ControlLabel == "") || len(s.TitleContains) > 512 || len(s.ControlLabel) > 512 || len(s.ControlRole) > 128 {
-		return nil, fmt.Errorf("expect requires exactly one title_contains or control_label (up to 512 bytes)")
-	}
-	if s.TitleContains != "" && (s.ControlRole != "" || s.Present != nil || s.Enabled != nil) {
-		return nil, fmt.Errorf("title expectation cannot include control options")
-	}
-	if s.Present != nil && !*s.Present && s.Enabled != nil {
-		return nil, fmt.Errorf("absent control cannot have enabled expectation")
+	if err := validateExpectation(s); err != nil {
+		return nil, err
 	}
 	g := &expectationGuard{v: v, w: w, spec: *s, settle: settle, report: verificationReport{Configured: true, RequireTransition: s.RequireTransition == nil || *s.RequireTransition, Scope: "explicit native UI predicate only; not application semantics or game response"}}
 	matched, err := g.read(ctx)
@@ -60,7 +54,21 @@ func (v *Service) prepareExpectation(ctx context.Context, w platform.Window, s *
 	return g, nil
 }
 
+func validateExpectation(s *ExpectedState) error {
+	if (s.TitleContains == "") == (s.ControlLabel == "") || len(s.TitleContains) > 512 || len(s.ControlLabel) > 512 || len(s.ControlRole) > 128 {
+		return fmt.Errorf("expect requires exactly one title_contains or control_label (up to 512 bytes)")
+	}
+	if s.TitleContains != "" && (s.ControlRole != "" || s.Present != nil || s.Enabled != nil) {
+		return fmt.Errorf("title expectation cannot include control options")
+	}
+	if s.Present != nil && !*s.Present && s.Enabled != nil {
+		return fmt.Errorf("absent control cannot have enabled expectation")
+	}
+	return nil
+}
+
 func (g *expectationGuard) read(ctx context.Context) (bool, error) {
+	defer g.v.performance.record("verification", time.Now())
 	g.report.Checks++
 	if g.spec.TitleContains != "" {
 		var w platform.Window

@@ -86,3 +86,20 @@ func TestFocusAmbiguityDiagnosticsContainOnlyCounts(t *testing.T) {
 		t.Fatal("ambiguous foreground is not guarded")
 	}
 }
+
+func TestSerializedResultBytesMatchProfileJSON(t *testing.T) {
+	for _, compact := range []bool{false, true} {
+		m := usageMetrics{measureWire: true, compactWire: compact}
+		out := result(map[string]any{"ok": true})
+		out.Content = append(out.Content, &mcp.ImageContent{MIMEType: "image/png", Data: []byte{1, 2, 3, 4}})
+		m.record("screen_capture", out, time.Millisecond)
+		wire := *out
+		if compact {
+			wire.StructuredContent = nil
+		}
+		encoded, err := json.Marshal(&wire)
+		if err != nil || m.snapshot()["serialized_result_bytes"] != int64(len(encoded)) {
+			t.Fatal("incorrect serialized size", m.snapshot(), err)
+		}
+	}
+}

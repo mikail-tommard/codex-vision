@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"encoding/json"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,6 +16,9 @@ type usageMetrics struct {
 	mu                                           sync.Mutex
 	calls, failures, images, bytes, milliseconds int64
 	tools                                        map[string]int64
+	outcomes                                     map[string]int64
+	measureWire, compactWire                     bool
+	wireBytes                                    int64
 	recent                                       []callDiagnostic
 	lastFinished                                 time.Time
 }
@@ -103,11 +107,26 @@ func (m *usageMetrics) record(tool string, out *mcp.CallToolResult, elapsed time
 		diagnostic.Outcome = "error"
 		return
 	}
+	if m.measureWire {
+		wire := *out
+		if m.compactWire {
+			wire.StructuredContent = nil
+		}
+		if encoded, err := json.Marshal(&wire); err == nil {
+			m.wireBytes += int64(len(encoded))
+		}
+	}
 	if out.IsError {
 		m.failures++
 		diagnostic.Outcome = "error"
 	}
 	if meta, ok := out.StructuredContent.(map[string]any); ok {
+		if outcome, ok := meta["outcome"].(ActionOutcome); ok {
+			if m.outcomes == nil {
+				m.outcomes = make(map[string]int64)
+			}
+			m.outcomes[outcome.Status]++
+		}
 		if f, ok := meta["failure"].(failureInfo); ok {
 			diagnostic.FailureCode = f.Code
 		}
@@ -172,5 +191,14 @@ func (m *usageMetrics) snapshot() map[string]any {
 	for k, v := range m.tools {
 		tools[k] = v
 	}
-	return map[string]any{"tool_calls": m.calls, "tool_errors": m.failures, "images_returned": m.images, "result_content_bytes": m.bytes, "tool_total_ms": m.milliseconds, "calls_by_tool": tools, "scope": "this process; text plus raw image bytes, excludes JSON/base64 overhead; not tokens, model/network time or actual human interventions"}
+	outcomes := make(map[string]int64, len(m.outcomes))
+	for key, value := range m.outcomes {
+		outcomes[key] = value
+	}
+	out := map[string]any{"tool_calls": m.calls, "tool_errors": m.failures, "images_returned": m.images, "result_content_bytes": m.bytes, "tool_total_ms": m.milliseconds, "calls_by_tool": tools, "action_outcomes": outcomes, "scope": "this process; content bytes exclude JSON/base64 overhead; action outcomes are explicit native predicates, not task/business success or tokens"}
+	if m.measureWire {
+		out["serialized_result_bytes"] = m.wireBytes
+		out["serialized_result_scope"] = "CallToolResult JSON including base64 and profile encoding; excludes JSON-RPC envelope and transport"
+	}
+	return out
 }

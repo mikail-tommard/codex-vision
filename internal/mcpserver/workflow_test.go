@@ -219,19 +219,36 @@ func TestLocalWaitReturnsUsableSnapshotWithoutBlockingCapture(t *testing.T) {
 	d.fields[0].Editable = false
 	cfg := uiConfig()
 	cfg.MaxPerMinute = 100
+	cfg.TimeoutMS = 6000
 	c, svc := connectDesktop(t, cfg, d)
 	old, _ := snapshotData(t, call(t, c, "ui_snapshot", map[string]any{"window_id": "mock-window"}, true))
 	call(t, c, "observation_start", map[string]any{"preview": false, "interval_ms": 250}, true)
 	svc.mu.Lock()
 	before := svc.total
 	svc.mu.Unlock()
+	transition, cancelTransition := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancelTransition()
 	go func() {
-		time.Sleep(450 * time.Millisecond)
-		d.stateMu.Lock()
-		d.fields[0].Editable = true
-		d.stateMu.Unlock()
+		// Become ready only after both UI polling and background capture have
+		// progressed. A fixed sleep falsely failed on slower race builds and
+		// did not establish that capture progressed while the wait was active.
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			if d.reads.Load() >= 3 && svc.Observer.Status().LocalFrames >= 2 {
+				d.stateMu.Lock()
+				d.fields[0].Editable = true
+				d.stateMu.Unlock()
+				return
+			}
+			select {
+			case <-transition.Done():
+				return
+			case <-ticker.C:
+			}
+		}
 	}()
-	r := call(t, c, "ui_wait", map[string]any{"condition": "field_ready", "window_id": "mock-window", "label": "Name", "timeout_ms": 1500, "poll_interval_ms": 50}, true)
+	r := call(t, c, "ui_wait", map[string]any{"condition": "field_ready", "window_id": "mock-window", "label": "Name", "timeout_ms": 4500, "poll_interval_ms": 50}, true)
 	var out struct {
 		Matched  bool            `json:"matched"`
 		Snapshot json.RawMessage `json:"snapshot"`

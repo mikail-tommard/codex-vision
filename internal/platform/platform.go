@@ -89,25 +89,30 @@ type InputMetrics struct {
 }
 
 type Action struct {
-	Metrics          *InputMetrics `json:"-"`
-	Motion           string        `json:"motion,omitempty"`
-	ApproachDuration time.Duration `json:"-"`
-	UIExpected       *UIElement    `json:"-"`
-	Process          string        `json:"process,omitempty"`
-	URL              string        `json:"url,omitempty"`
-	Tool             string        `json:"tool"`
-	X                int           `json:"x,omitempty"`
-	Y                int           `json:"y,omitempty"`
-	EndX             int           `json:"end_x,omitempty"`
-	EndY             int           `json:"end_y,omitempty"`
-	Button           string        `json:"button,omitempty"`
-	Count            int           `json:"count,omitempty"`
-	Delta            int           `json:"delta,omitempty"`
-	Horizontal       bool          `json:"horizontal,omitempty"`
-	Text             string        `json:"-"`
-	Keys             []string      `json:"keys,omitempty"`
-	WindowID         string        `json:"window_id,omitempty"`
-	Duration         time.Duration `json:"-"`
+	ControlExpected       *UIControl    `json:"-"`
+	ContextExpected       *UIContext    `json:"-"`
+	ControlUniqueSelector bool          `json:"-"`
+	ControlLabelOnly      bool          `json:"-"`
+	ControlMaxNodes       int           `json:"-"`
+	Metrics               *InputMetrics `json:"-"`
+	Motion                string        `json:"motion,omitempty"`
+	ApproachDuration      time.Duration `json:"-"`
+	UIExpected            *UIElement    `json:"-"`
+	Process               string        `json:"process,omitempty"`
+	URL                   string        `json:"url,omitempty"`
+	Tool                  string        `json:"tool"`
+	X                     int           `json:"x,omitempty"`
+	Y                     int           `json:"y,omitempty"`
+	EndX                  int           `json:"end_x,omitempty"`
+	EndY                  int           `json:"end_y,omitempty"`
+	Button                string        `json:"button,omitempty"`
+	Count                 int           `json:"count,omitempty"`
+	Delta                 int           `json:"delta,omitempty"`
+	Horizontal            bool          `json:"horizontal,omitempty"`
+	Text                  string        `json:"-"`
+	Keys                  []string      `json:"keys,omitempty"`
+	WindowID              string        `json:"window_id,omitempty"`
+	Duration              time.Duration `json:"-"`
 }
 type Desktop interface {
 	Name() string

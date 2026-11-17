@@ -1,0 +1,30 @@
+{
+  "server_version": "0.14.2",
+  "comparison": "full versus summary journal on the same eight-step verified mock workflow; wait_ms used for both; same enabled catalog",
+  "measurements": [
+    {
+      "environment": "paired mock workflow; same eight verified keyboard actions",
+      "images_each": 0,
+      "profile": "compact",
+      "scope": "CallToolResult JSON only; excludes requests/catalog/transport and Codex tokens or quota",
+      "serialized_bytes_after": 330,
+      "serialized_bytes_before": 892,
+      "strategy_after": "wait_ms plus summary",
+      "strategy_before": "wait_ms plus full journal",
+      "tool_calls_each": 1
+    },
+    {
+      "environment": "paired mock workflow; same eight verified keyboard actions",
+      "images_each": 0,
+      "profile": "full",
+      "scope": "CallToolResult JSON only; excludes requests/catalog/transport and Codex tokens or quota",
+      "serialized_bytes_after": 610,
+      "serialized_bytes_before": 1656,
+      "strategy_after": "wait_ms plus summary",
+      "strategy_before": "wait_ms plus full journal",
+      "tool_calls_each": 1
+    }
+  ],
+  "scope": "Serialized CallToolResult JSON only; excludes request/catalog/transport and provider tokens or subscription quota",
+  "windows_validation": "Portable ACL policy tests run on macOS; Windows native tests cross-compiled only; no Windows runtime or GUI verification."
+}

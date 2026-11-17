@@ -1,0 +1,152 @@
+{
+  "environment": "synthetic scripted fixtures; no real apps, game engine or LLM",
+  "scope": "driver contract and explicit UI predicate verification, not model quality or subscription savings",
+  "scenarios": [
+    {
+      "elapsed_ms": 617,
+      "environment": "synthetic scripted fixture",
+      "images": 2,
+      "passed": true,
+      "posted_actions": 1,
+      "result_content_bytes": 15854,
+      "scenario": "browser_like",
+      "scripted_manual_interventions": 0,
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "variant": "separate_tools",
+      "verification": "exact synthetic window-title predicate"
+    },
+    {
+      "elapsed_ms": 612,
+      "environment": "synthetic scripted fixture",
+      "images": 2,
+      "passed": true,
+      "posted_actions": 1,
+      "result_content_bytes": 15627,
+      "scenario": "browser_like",
+      "scripted_manual_interventions": 0,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "variant": "unified_tools",
+      "verification": "exact synthetic window-title predicate"
+    },
+    {
+      "elapsed_ms": 595,
+      "environment": "synthetic scripted fixture",
+      "images": 1,
+      "passed": true,
+      "posted_actions": 4,
+      "result_content_bytes": 11084,
+      "scenario": "form_like",
+      "scripted_manual_interventions": 0,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "variant": "separate_tools",
+      "verification": "exact synthetic window-title predicate"
+    },
+    {
+      "elapsed_ms": 600,
+      "environment": "synthetic scripted fixture",
+      "images": 1,
+      "passed": true,
+      "posted_actions": 4,
+      "result_content_bytes": 11631,
+      "scenario": "form_like",
+      "scripted_manual_interventions": 0,
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "variant": "unified_tools",
+      "verification": "exact synthetic window-title predicate"
+    },
+    {
+      "elapsed_ms": 631,
+      "environment": "synthetic scripted fixture",
+      "images": 1,
+      "passed": true,
+      "posted_actions": 1,
+      "result_content_bytes": 9833,
+      "scenario": "terminal_like",
+      "scripted_manual_interventions": 0,
+      "tool_calls": 3,
+      "tool_errors": 0,
+      "variant": "separate_tools",
+      "verification": "exact synthetic window-title predicate"
+    },
+    {
+      "elapsed_ms": 586,
+      "environment": "synthetic scripted fixture",
+      "images": 1,
+      "passed": true,
+      "posted_actions": 1,
+      "result_content_bytes": 9525,
+      "scenario": "terminal_like",
+      "scripted_manual_interventions": 0,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "variant": "unified_tools",
+      "verification": "exact synthetic window-title predicate"
+    },
+    {
+      "elapsed_ms": 603,
+      "environment": "synthetic scripted fixture",
+      "images": 2,
+      "passed": true,
+      "posted_actions": 1,
+      "result_content_bytes": 15854,
+      "scenario": "cad_like",
+      "scripted_manual_interventions": 0,
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "variant": "separate_tools",
+      "verification": "exact synthetic window-title predicate"
+    },
+    {
+      "elapsed_ms": 622,
+      "environment": "synthetic scripted fixture",
+      "images": 2,
+      "passed": true,
+      "posted_actions": 1,
+      "result_content_bytes": 15630,
+      "scenario": "cad_like",
+      "scripted_manual_interventions": 0,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "variant": "unified_tools",
+      "verification": "exact synthetic window-title predicate"
+    }
+  ],
+  "paired_summary": [
+    {
+      "scenario": "browser_like",
+      "tool_calls_before": 4,
+      "tool_calls_after": 2,
+      "images_before": 2,
+      "images_after": 2
+    },
+    {
+      "scenario": "cad_like",
+      "tool_calls_before": 4,
+      "tool_calls_after": 2,
+      "images_before": 2,
+      "images_after": 2
+    },
+    {
+      "scenario": "form_like",
+      "tool_calls_before": 6,
+      "tool_calls_after": 4,
+      "images_before": 1,
+      "images_after": 1
+    },
+    {
+      "scenario": "terminal_like",
+      "tool_calls_before": 3,
+      "tool_calls_after": 2,
+      "images_before": 1,
+      "images_after": 1
+    }
+  ],
+  "native": {
+    "status": "not_requested",
+    "real_app_scenarios": "not_run"
+  }
+}

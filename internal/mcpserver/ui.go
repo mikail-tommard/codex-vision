@@ -12,6 +12,7 @@ import (
 )
 
 type uiSnapshot struct {
+	Context   *platform.UIContext
 	Truncated bool
 	ID        string
 	Window    platform.Window
@@ -99,6 +100,10 @@ func (v *Service) saveUISnapshot(w platform.Window, snapshot platform.UISnapshot
 		return nil, err
 	}
 	saved := &uiSnapshot{Truncated: snapshot.Truncated, ID: id, Window: w, Expires: time.Now().Add(time.Minute), Elements: make(map[string]platform.UIElement)}
+	if snapshot.Context != nil {
+		context := *snapshot.Context
+		saved.Context = &context
+	}
 	elements := make([]platform.UIElement, 0, len(snapshot.Elements))
 	query := strings.ToLower(queryText)
 	if len(snapshot.Elements) > maxNodes {

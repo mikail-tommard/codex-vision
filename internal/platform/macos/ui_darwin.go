@@ -75,7 +75,10 @@ func (d *Desktop) fillUI(ctx context.Context, a platform.Action) error {
 	if err != nil {
 		return err
 	}
-	expected, err := json.Marshal(a.UIExpected)
+	expected, err := json.Marshal(struct {
+		*platform.UIElement
+		Context *platform.UIContext `json:"context,omitempty"`
+	}{a.UIExpected, a.ContextExpected})
 	if err != nil {
 		return err
 	}
@@ -129,4 +132,68 @@ func (d *Desktop) ReadControls(ctx context.Context, w platform.Window, maxNodes 
 		return out, err
 	}
 	return out, ctx.Err()
+}
+
+func (d *Desktop) ReadUIContext(ctx context.Context, w platform.Window) (platform.UIContext, error) {
+	var out platform.UIContext
+	if err := ctx.Err(); err != nil {
+		return out, err
+	}
+	if err := d.permissionState().AccessibilityError(); err != nil {
+		return out, err
+	}
+	native, err := d.uiWindow(ctx, w)
+	if err != nil {
+		return out, err
+	}
+	if err := decode(C.cv_ui_context(C.uint32_t(native)), &out); err != nil {
+		return out, err
+	}
+	return out, ctx.Err()
+}
+
+func (d *Desktop) validateUITarget(ctx context.Context, a platform.Action, w platform.Window) error {
+	control := a.ControlExpected
+	if control != nil && control.Identity == "" {
+		control = nil
+	}
+	if a.ContextExpected == nil && control == nil {
+		return nil
+	}
+	native, err := d.uiWindow(ctx, w)
+	if err != nil {
+		return err
+	}
+	proof, err := json.Marshal(struct {
+		Context *platform.UIContext `json:"context,omitempty"`
+		Control *platform.UIControl `json:"control,omitempty"`
+	}{a.ContextExpected, control})
+	if err != nil {
+		return err
+	}
+	payload := C.CString(string(proof))
+	defer C.free(unsafe.Pointer(payload))
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	var message *C.char
+	ok := C.cv_ui_validate(C.uint32_t(native), payload, C.double(a.X), C.double(a.Y), C.int(uiTimeout(ctx)), &message)
+	if err := nativeError(ok, message); err != nil {
+		return err
+	}
+	return ctx.Err()
+}
+
+func (d *Desktop) validateActionContext(ctx context.Context, a platform.Action) error {
+	if a.ContextExpected == nil {
+		return nil
+	}
+	w, err := d.Active(ctx)
+	if err != nil {
+		return err
+	}
+	if a.WindowID != "" && a.WindowID != w.ID {
+		return fmt.Errorf("native UI context window is no longer foreground")
+	}
+	return d.validateUITarget(ctx, a, w)
 }

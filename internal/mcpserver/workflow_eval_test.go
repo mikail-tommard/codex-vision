@@ -48,6 +48,11 @@ func TestAgentWorkflowScenarios(t *testing.T) {
 				}
 				if scenario.fields {
 					call(t, c, "ui_fill_batch", map[string]any{"snapshot_id": view.Fields["snapshot_id"], "fields": batchFields()}, true)
+					if unified {
+						// The separate write invalidates the previous view. Resolve
+						// the next target from fresh UI evidence, never old references.
+						view = agentResult(t, call(t, c, "desktop_observe", map[string]any{"after_sequence": view.Frame.Sequence}, true))
+					}
 				}
 				step := map[string]any{"action": "click", "x": 90, "y": 55}
 				if scenario.keyboard {

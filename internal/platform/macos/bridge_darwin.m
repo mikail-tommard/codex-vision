@@ -15,6 +15,7 @@
 #include "focus_resolver.h"
 #include "window_match.h"
 #include "scroll_target.h"
+#import "control_identity.h"
 
 static char *json(id obj) {
  NSError *err=nil; NSData *data=[NSJSONSerialization dataWithJSONObject:obj options:0 error:&err];
@@ -472,24 +473,69 @@ static NSDictionary *uiControl(AXUIElementRef element,BOOL *incomplete) {
  if(enabled&&CFGetTypeID((__bridge CFTypeRef)enabled)==CFBooleanGetTypeID())known=cv_json_bool(CFBooleanGetValue((__bridge CFBooleanRef)enabled));
  return @{@"role":role,@"label":label,@"bounds":rect(uiBounds(element)),@"enabled":known};
 }
-static char *uiRead(uint32_t window,int max_nodes,int timeout_ms,BOOL controls){@autoreleasepool{
+static CVControlIdentityCache *controlIdentities;
+static NSDictionary *uiContextInfo(AXUIElementRef root,BOOL *incomplete){
+ @synchronized(CVControlIdentityCache.class){
+  if(!controlIdentities)controlIdentities=[CVControlIdentityCache new];
+  id raw=uiControlAttribute(root,kAXDocumentAttribute,incomplete);NSString *document=nil;
+  if(raw){if([raw isKindOfClass:NSString.class]&&[raw length]<=4096){if([raw length])document=raw;}else *incomplete=YES;}
+  [controlIdentities beginRoot:(__bridge id)root document:document at:NSProcessInfo.processInfo.systemUptime];
+  return @{@"id":controlIdentities.contextID,@"kind":controlIdentities.contextKind};
+ }
+}
+static char *uiRead(uint32_t window,int max_nodes,int timeout_ms,BOOL controls){@autoreleasepool{@synchronized(CVControlIdentityCache.class){
  char *error=NULL;AXUIElementRef root=uiWindow(window,&error);if(!root){char *out=json(@{@"error":error?@(error):@"UI unavailable"});free(error);return out;}
  NSTimeInterval deadline=NSProcessInfo.processInfo.systemUptime+MIN(2000,MAX(1,timeout_ms))/1000.0;
  NSMutableArray *pending=[NSMutableArray arrayWithObject:@{@"element":(__bridge id)root,@"path":@[]}];CFRelease(root);
  NSMutableArray *fields=[NSMutableArray array];NSMutableDictionary *references=[NSMutableDictionary dictionary];int visited=0;BOOL truncated=NO;
+ NSDictionary *context=uiContextInfo((__bridge AXUIElementRef)pending[0][@"element"],&truncated);
  while(pending.count&&visited<max_nodes&&NSProcessInfo.processInfo.systemUptime<deadline){
   NSDictionary *item=pending.lastObject;[pending removeLastObject];AXUIElementRef element=(__bridge AXUIElementRef)item[@"element"];NSArray *path=item[@"path"];visited++;
-  NSDictionary *field=controls?uiControl(element,&truncated):uiField(element,path);if(field){NSMutableDictionary *entry=[field mutableCopy];if(!controls){NSString *identity=NSUUID.UUID.UUIDString;entry[@"identity"]=identity;references[identity]=(__bridge id)element;}[fields addObject:entry];}
+  NSDictionary *field=controls?uiControl(element,&truncated):uiField(element,path);if(field){NSMutableDictionary *entry=[field mutableCopy];if(!controls){NSString *identity=NSUUID.UUID.UUIDString;entry[@"identity"]=identity;references[identity]=(__bridge id)element;}else{NSString *identity=[controlIdentities identityFor:(__bridge id)element];if(identity)entry[@"identity"]=identity;else truncated=YES;}[fields addObject:entry];}
   CFIndex count=0;AXError childrenStatus=AXUIElementGetAttributeValueCount(element,kAXChildrenAttribute,&count);if(childrenStatus!=kAXErrorSuccess){if(controls&&childrenStatus!=kAXErrorNoValue&&childrenStatus!=kAXErrorAttributeUnsupported)truncated=YES;continue;}if(count<1)continue;
   if(path.count>=24){truncated=YES;continue;}
   CFIndex remaining=MAX(0,max_nodes-visited-(int)pending.count);CFIndex take=MIN(count,remaining);if(take<count)truncated=YES;if(take<=0)continue;
   CFArrayRef children=NULL;if(AXUIElementCopyAttributeValues(element,kAXChildrenAttribute,0,take,&children)!=kAXErrorSuccess||!children){if(controls)truncated=YES;if(children)CFRelease(children);continue;}
   for(CFIndex i=CFArrayGetCount(children);i>0;i--){CFTypeRef child=CFArrayGetValueAtIndex(children,i-1);if(CFGetTypeID(child)!=AXUIElementGetTypeID())continue;[pending addObject:@{@"element":(__bridge id)child,@"path":[path arrayByAddingObject:@(i-1)]}];}CFRelease(children);
  }
- if(pending.count)truncated=YES;if(!controls){@synchronized(NSProcessInfo.processInfo){uiReferences=references;uiExpires=NSProcessInfo.processInfo.systemUptime+60;}}return json(@{controls?@"controls":@"elements":fields,@"visited":@(visited),@"truncated":cv_json_bool(truncated)});
-}}
+ if(pending.count)truncated=YES;if(!controls){@synchronized(NSProcessInfo.processInfo){uiReferences=references;uiExpires=NSProcessInfo.processInfo.systemUptime+60;}}return json(@{controls?@"controls":@"elements":fields,@"visited":@(visited),@"truncated":cv_json_bool(truncated),@"context":context});
+}}}
 char *cv_ui_snapshot(uint32_t window,int max_nodes,int timeout_ms){return uiRead(window,max_nodes,timeout_ms,NO);}
 char *cv_ui_controls(uint32_t window,int max_nodes,int timeout_ms){return uiRead(window,max_nodes,timeout_ms,YES);}
+char *cv_ui_context(uint32_t window){@autoreleasepool{
+ char *error=NULL;AXUIElementRef root=uiWindow(window,&error);if(!root){char *out=json(@{@"error":error?@(error):@"UI unavailable"});free(error);return out;}
+ BOOL incomplete=NO;NSDictionary *context=uiContextInfo(root,&incomplete);CFRelease(root);
+ return json(incomplete?@{@"error":@"native UI context unavailable"}:context);
+}}
+int cv_ui_validate(uint32_t window,const char *expected_json,double x,double y,int timeout_ms,char **error){@autoreleasepool{@synchronized(CVControlIdentityCache.class){
+ NSDictionary *expected=[NSJSONSerialization JSONObjectWithData:[@(expected_json) dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
+ if(![expected isKindOfClass:NSDictionary.class])return fail(error,@"invalid native UI proof");
+ AXUIElementRef root=uiWindow(window,error);if(!root)return 0;
+ BOOL incomplete=NO;NSDictionary *context=uiContextInfo(root,&incomplete);CFRelease(root);
+ NSDictionary *wanted=expected[@"context"];
+ if(incomplete||([wanted isKindOfClass:NSDictionary.class]&&![wanted isEqual:context]))return fail(error,@"stale native UI context before input");
+ NSDictionary *control=expected[@"control"];
+ if(![control isKindOfClass:NSDictionary.class])return 1;
+ id target=[controlIdentities elementForIdentity:control[@"identity"]];
+ if(!target)return fail(error,@"stale native control identity before input");
+ NSDictionary *fresh=uiControl((__bridge AXUIElementRef)target,&incomplete);
+ if(incomplete||!fresh||![fresh[@"role"] isEqual:control[@"role"]]||![fresh[@"label"] isEqual:control[@"label"]]||![fresh[@"bounds"] isEqual:control[@"bounds"]]||![fresh[@"enabled"] isEqual:cv_json_bool(YES)])return fail(error,@"native control changed before input");
+ // Hit-test the actual target point after pointer approach. Labels/bounds alone
+ // cannot detect a replacement or a foreign overlay. A child hit is accepted
+ // only when a bounded native parent chain reaches the original AX object.
+ NSTimeInterval deadline=NSProcessInfo.processInfo.systemUptime+MIN(2000,MAX(1,timeout_ms))/1000.0;
+ AXUIElementRef system=AXUIElementCreateSystemWide(),hit=NULL;AXUIElementSetMessagingTimeout(system,0.05);
+ AXError status=AXUIElementCopyElementAtPosition(system,(float)x,(float)y,&hit);CFRelease(system);
+ if(status!=kAXErrorSuccess||!hit){if(hit)CFRelease(hit);return fail(error,@"native control hit unavailable; input refused");}
+ id current=CFBridgingRelease(hit);BOOL matched=NO;
+ for(int depth=0;current&&depth<24&&NSProcessInfo.processInfo.systemUptime<deadline;depth++){
+  if(CFEqual((__bridge CFTypeRef)current,(__bridge CFTypeRef)target)){matched=YES;break;}
+  id parent=uiAttribute((__bridge AXUIElementRef)current,kAXParentAttribute);
+  if(!parent||CFGetTypeID((__bridge CFTypeRef)parent)!=AXUIElementGetTypeID())break;current=parent;
+ }
+ if(!matched)return fail(error,@"native control is replaced or obscured; input refused");
+ return 1;
+}}}
 void *cv_ui_cancel_new(void){_Atomic int *flag=calloc(1,sizeof(*flag));if(flag)atomic_init(flag,0);return flag;}
 void cv_ui_cancel(void *cancel){if(cancel)atomic_store_explicit((_Atomic int*)cancel,1,memory_order_release);}
 static BOOL uiCancelled(void *cancel){return !cancel||atomic_load_explicit((_Atomic int*)cancel,memory_order_acquire)!=0;}
@@ -499,6 +545,8 @@ int cv_ui_fill(uint32_t window,const char *expected_json,const char *text,int ti
  if(![expected isKindOfClass:NSDictionary.class])return fail(error,@"invalid UI target");NSArray *path=expected[@"path"];
  if(![path isKindOfClass:NSArray.class]||path.count>24||path.count==0)return fail(error,@"invalid UI path");
  AXUIElementRef root=uiWindow(window,error);if(!root)return 0;id rootObject=CFBridgingRelease(root);id current=rootObject;
+ NSDictionary *wantedContext=expected[@"context"];BOOL badContext=NO;
+ if([wantedContext isKindOfClass:NSDictionary.class]&&(![wantedContext isEqual:uiContextInfo((__bridge AXUIElementRef)rootObject,&badContext)]||badContext))return fail(error,@"stale native UI context before field lookup");
  NSTimeInterval deadline=NSProcessInfo.processInfo.systemUptime+MIN(2000,MAX(1,timeout_ms))/1000.0;
  for(id step in path){if(uiCancelled(cancel))return fail(error,@"UI write cancelled");if(NSProcessInfo.processInfo.systemUptime>=deadline)return fail(error,@"UI lookup timed out before writing");if(![step isKindOfClass:NSNumber.class]||[step integerValue]<0||[step integerValue]>2000)return fail(error,@"invalid UI path index");
   CFArrayRef children=NULL;AXUIElementRef element=(__bridge AXUIElementRef)current;AXUIElementSetMessagingTimeout(element,0.05);
@@ -510,11 +558,18 @@ int cv_ui_fill(uint32_t window,const char *expected_json,const char *text,int ti
  AXUIElementRef target=(__bridge AXUIElementRef)current;NSDictionary *fresh=uiField(target,path);
  if(!fresh||![fresh[@"role"] isEqual:expected[@"role"]]||![fresh[@"label"] isEqual:expected[@"label"]]||![fresh[@"placeholder"] isEqual:expected[@"placeholder"]?:@""]||![fresh[@"bounds"] isEqual:expected[@"bounds"]]||![fresh[@"enabled"] boolValue]||![fresh[@"editable"] boolValue]||[fresh[@"secure"] boolValue])return fail(error,@"field changed, disabled, protected or read-only; refresh ui_snapshot");
  CGRect bounds=uiBounds(target),windowBounds=uiBounds((__bridge AXUIElementRef)rootObject);if(CGRectIsEmpty(bounds)||!CGRectContainsRect(windowBounds,bounds))return fail(error,@"field is not within the foreground window");
- AXUIElementRef confirmed=uiWindow(window,error);if(!confirmed)return 0;BOOL same=CFEqual(confirmed,(__bridge CFTypeRef)rootObject);CFRelease(confirmed);if(!same)return fail(error,@"foreground changed before field write");
+ AXUIElementRef confirmed=uiWindow(window,error);if(!confirmed)return 0;BOOL same=CFEqual(confirmed,(__bridge CFTypeRef)rootObject);
+ if([wantedContext isKindOfClass:NSDictionary.class]&&(![wantedContext isEqual:uiContextInfo(confirmed,&badContext)]||badContext))same=NO;
+ CFRelease(confirmed);if(!same)return fail(error,@"foreground or native UI context changed before field write");
  if(NSProcessInfo.processInfo.systemUptime>=deadline)return fail(error,@"UI lookup timed out before writing");
  AXUIElementSetMessagingTimeout(target,(float)MIN(0.5,MAX(0.01,deadline-NSProcessInfo.processInfo.systemUptime)));
  if(uiCancelled(cancel))return fail(error,@"UI write cancelled before mutation");
  AXError result=AXUIElementSetAttributeValue(target,kAXValueAttribute,(__bridge CFStringRef)@(text));if(result!=kAXErrorSuccess)return fail(error,[NSString stringWithFormat:@"field write not confirmed (AX error %d); inspect before retrying",result]);
  id value=uiAttribute(target,kAXValueAttribute);if(![value isKindOfClass:NSString.class]||![value isEqualToString:@(text)])return fail(error,@"field readback differs; inspect before retrying");
+ if([wantedContext isKindOfClass:NSDictionary.class]){
+  confirmed=uiWindow(window,error);if(!confirmed)return 0;
+  same=[wantedContext isEqual:uiContextInfo(confirmed,&badContext)]&&!badContext;CFRelease(confirmed);
+  if(!same)return fail(error,@"native UI context changed after field write; inspect before retrying");
+ }
  return 1;
 }}

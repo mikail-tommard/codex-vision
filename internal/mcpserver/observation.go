@@ -159,7 +159,9 @@ func (v *Service) observationSample(ctx context.Context, a ObserveStartArgs) (ob
 	if err := vision.Validate(image.Rect(0, 0, bounds.Width, bounds.Height)); err != nil {
 		return observation.Sample{}, err
 	}
+	captureStarted := time.Now()
 	im, err := v.Desktop.Capture(ctx, bounds)
+	v.performance.record("capture", captureStarted)
 	if err != nil {
 		return observation.Sample{}, err
 	}

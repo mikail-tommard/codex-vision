@@ -38,6 +38,7 @@ type readyGuard struct {
 var errControlsUnavailable = errors.New("control metadata unavailable")
 
 func (v *Service) readControls(ctx context.Context, w platform.Window, n int) (platform.ControlSnapshot, error) {
+	defer v.performance.record("controls_read", time.Now())
 	var raw platform.ControlSnapshot
 	reader, ok := v.Desktop.(platform.ControlReader)
 	if !ok {
@@ -57,6 +58,9 @@ func (v *Service) readControls(ctx context.Context, w platform.Window, n int) (p
 		raw, e = reader.ReadControls(ctx, w, n)
 		if e != nil {
 			return e
+		}
+		if len(raw.Controls) > n {
+			return fmt.Errorf("backend exceeded control traversal bound")
 		}
 		active, e = v.attentionWindow(ctx, w.ID)
 		if e != nil {
@@ -132,6 +136,7 @@ func (v *Service) prepareReady(ctx context.Context, w platform.Window, s *ReadyW
 	return g, nil
 }
 func (g *readyGuard) observe(ctx context.Context) (bool, error) {
+	defer g.v.performance.record("verification", time.Now())
 	raw, err := g.v.readControls(ctx, g.window, g.spec.MaxNodes)
 	g.report.Checks++
 	if err != nil {

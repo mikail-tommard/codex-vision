@@ -2,6 +2,32 @@
 
 Версия работающего сервера доступна в `session_status.server.version`. Эта история описывает возможности исходного кода; наличие записи не означает публикацию готовых бинарников или проверку каждого приложения вживую.
 
+## 0.14.2
+
+- UI memory Windows: native protected owner/SYSTEM DACL при создании directory/temp files, проверка actual-handle ACL/owner и private replacement через MoveFileEx. Broad/inherited/NULL ACL, reparse/hardlinks, ADS и nonlocal/non-ACL volumes отвергаются; существующие права не изменяются.
+- Общие store/MCP memory tests больше не пропускаются на Windows; добавлены native descriptor/filesystem tests и portable ACL policy cases. Windows runtime здесь не проверялся, cross-compile не заменяет его.
+- workflow detail=summary сокращает повторные успешные journal rows, сохраняя checkpoint, cursor, состояние и последнюю ошибку. Full остаётся прежним, summary несовместим с after_event.
+- Running workflow честно отмечает input_may_have_posted во время action/verification; отмена не разрешает replay.
+- Парные mock-измерения объёма full/summary включены в tests; точные Codex tokens/квота не измеряются.
+
+## 0.14.1
+
+- macOS AX object identity и window/document context защищают от одинаково выглядящих замен и смены документа с прежним title. Native hit-test выполняется после pointer approach; field write проверяет context и после readback.
+- Приватные native IDs/document URL не добавляются в MCP-ответы или persistent locator strategies.
+- workflow wait_ms позволяет получить завершение в одном вызове, after_event/event_cursor исключают повторную выдачу журнала. Cancel/stop остаются доступны во время ожидания; status без ID находит последний run.
+- Парное измерение mock workflow: 2→1 MCP-вызов, примерно 40% меньше serialized JSON, 0 изображений; это не измерение токенов или квоты Codex.
+- Добавлен opt-in контролируемый AppKit GUI fixture; отсутствие GUI/permissions явно означает skip. Windows/Linux backend contracts сохранены.
+
+## 0.14.0
+
+- Семантические target label/role из наблюдённого дерева: точное уникальное совпадение и свежая проверка перед каждым действием.
+- Защита view при смене заголовка, значимом visual revision и отдельном MCP-вводе; observe/input сериализуются.
+- Добавочные outcome success/failed/timeout/ambiguous/needs_confirmation с явным scope доказательств.
+- Opt-in workflow_control: native postconditions, checkpoint, deadline/action budget, cancel и ограниченный pre-input resume без повторов неподтверждённых действий.
+- Opt-in локальные хешированные записи о проверенных локаторах: namespace, TTL, bounded storage и clear; Windows storage явно unsupported до ACL adapter.
+- Метрики этапов, opt-in serialized result bytes и явные backend capabilities. Native UIA/AT-SPI/events/Wayland не добавлены.
+- Документация и ограничения: docs/autonomy.md. Default flags сохраняют прежний каталог инструментов и локальную политику.
+
 ## 0.13.6
 
 - Windows window_focus: после восстановления перекрытое окно один раз поднимается штатным BringWindowToTop. Если это уже активировало точный HWND, SetForegroundWindow не вызывается; иначе отправляется одна попытка активации. Desktop/PID/ID перепроверяются между этапами. Диагностика содержит результат подъёма. Ограничения Windows и recovery guard сохранены; успех API не заменяет проверку foreground.

@@ -8,6 +8,8 @@
 # Local configuration and runtime state
 /config.json
 /configs/*.local.json
+/configs/*.local.json.*
+/config.json.*
 *.audit.jsonl
 *.stop
 .env

@@ -2,19 +2,20 @@ package mcpserver
 
 import (
 	"context"
-	"example.com/codex-vision/internal/platform"
 	"strings"
 )
 
 // UI snapshots and native reference maps share one lifecycle. A batch also
 // reserves the MCP input lane so unrelated client input cannot interleave.
+// Unified observation holds that lane too: otherwise it could publish a view
+// after concurrent input had invalidated the state being observed.
 // session_stop never acquires either lane and remains immediately available.
 func (s *Service) lockTool(ctx context.Context, name string) (func(), error) {
 	var lanes []chan struct{}
 	if strings.HasPrefix(name, "ui_") || name == "desktop_observe" || name == "desktop_act" {
 		lanes = append(lanes, s.uiOps)
 	}
-	if platform.NeedsApproval(name) || name == "mouse_move" || name == "mouse_scroll" || name == "window_focus" || name == "ui_fill_batch" || name == "mouse_action_wait" || name == "desktop_batch" || name == "desktop_act" {
+	if inputTool(name) || name == "desktop_observe" {
 		lanes = append(lanes, s.inputs)
 	}
 	acquired := 0

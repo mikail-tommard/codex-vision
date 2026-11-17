@@ -2,36 +2,43 @@ package mcpserver
 
 import (
 	"context"
+	"errors"
 	"example.com/codex-vision/internal/config"
 	"example.com/codex-vision/internal/observation"
 	"example.com/codex-vision/internal/platform"
 	"example.com/codex-vision/internal/safety"
+	"example.com/codex-vision/internal/uimemory"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"log/slog"
 	"sync"
 	"time"
 )
 
-const serverVersion = "0.13.6"
+const serverVersion = "0.14.2"
 
 type Service struct {
-	views    agentViews
-	metrics  usageMetrics
-	started  time.Time
-	Desktop  platform.Desktop
-	Session  *safety.Session
-	Config   config.Config
-	Log      *slog.Logger
-	recovery recoveryGuard
-	Observer *observation.Manager
-	uiMu     sync.Mutex
-	ui       *uiSnapshot
-	uiOps    chan struct{}
-	inputs   chan struct{}
-	reads    chan struct{}
-	mu       sync.Mutex
-	recent   []time.Time
-	total    int
+	views       agentViews
+	metrics     usageMetrics
+	performance stageMetrics
+	workflows   workflowState
+	memory      *uimemory.Store
+	memoryMu    sync.Mutex
+	memoryFault string
+	started     time.Time
+	Desktop     platform.Desktop
+	Session     *safety.Session
+	Config      config.Config
+	Log         *slog.Logger
+	recovery    recoveryGuard
+	Observer    *observation.Manager
+	uiMu        sync.Mutex
+	ui          *uiSnapshot
+	uiOps       chan struct{}
+	inputs      chan struct{}
+	reads       chan struct{}
+	mu          sync.Mutex
+	recent      []time.Time
+	total       int
 }
 
 func New(c config.Config, d platform.Desktop, l *slog.Logger) (*mcp.Server, *Service) {
@@ -39,7 +46,24 @@ func New(c config.Config, d platform.Desktop, l *slog.Logger) (*mcp.Server, *Ser
 		c.ToolProfile = "compact"
 	}
 	svc := &Service{started: time.Now(), Desktop: d, Config: c, Session: safety.New(c, d, l), Log: l, uiOps: make(chan struct{}, 1), inputs: make(chan struct{}, 1), reads: make(chan struct{}, 1)}
+	svc.metrics.measureWire, svc.metrics.compactWire = c.MeasureWireBytes, c.ToolProfile == "compact"
 	svc.Observer = observation.New(nil, svc.Session.ObservationError)
+	if c.UIMemoryDirectory != "" {
+		namespace := c.UIMemoryNamespace
+		var err error
+		if namespace == "" {
+			namespace, err = opaqueID()
+		}
+		if err == nil {
+			svc.memory, err = uimemory.Open(c.UIMemoryDirectory, namespace, time.Duration(c.UIMemoryTTLHours)*time.Hour)
+		}
+		if err != nil {
+			svc.memoryFault = "unavailable; check private directory, retention and memory document locally"
+			if errors.Is(err, uimemory.ErrUnsupported) {
+				svc.memoryFault = uimemory.ErrUnsupported.Error()
+			}
+		}
+	}
 	s := mcp.NewServer(&mcp.Implementation{Name: "codex-vision", Version: serverVersion}, &mcp.ServerOptions{Instructions: agentInstructions})
 	svc.register(s)
 	svc.registerObservation(s)
@@ -50,6 +74,12 @@ func New(c config.Config, d platform.Desktop, l *slog.Logger) (*mcp.Server, *Ser
 	svc.registerUIBatch(s)
 	svc.registerUIWait(s)
 	svc.registerAgent(s)
+	if c.Workflows {
+		svc.registerWorkflow(s)
+	}
+	if c.UIMemoryDirectory != "" {
+		svc.registerMemory(s)
+	}
 	return s, svc
 }
 func (s *Service) Run(ctx context.Context, server *mcp.Server) error {
@@ -61,6 +91,7 @@ func (s *Service) Run(ctx context.Context, server *mcp.Server) error {
 
 func (s *Service) Close() {
 	s.Session.Stop()
+	s.cancelWorkflow()
 	s.Observer.Close()
 	s.uiMu.Lock()
 	s.ui = nil

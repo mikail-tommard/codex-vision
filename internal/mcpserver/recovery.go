@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"example.com/codex-vision/internal/platform"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"os"
 	"strings"
@@ -165,5 +166,10 @@ func (v *Service) sessionStatus() *mcp.CallToolResult {
 	status["server"] = map[string]any{"version": serverVersion, "pid": os.Getpid(), "executable": executable, "started_at": v.started.UTC().Format(time.RFC3339), "tool_profile": v.Config.ToolProfile}
 	status["recovery"] = v.recovery.status()
 	status["metrics"] = v.metrics.snapshot()
+	status["stage_metrics"] = v.performance.snapshot()
+	status["capabilities"] = platform.Capabilities(v.Desktop)
+	if v.Config.UIMemoryDirectory != "" {
+		status["ui_memory"] = v.memoryStatus()
+	}
 	return result(status)
 }

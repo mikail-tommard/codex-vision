@@ -141,6 +141,9 @@ func (d *Desktop) click(ctx context.Context, a platform.Action) error {
 		if err := d.checkPointerTarget(ctx, target, a.X, a.Y); err != nil {
 			return err
 		}
+		if err := d.validateUITarget(ctx, a, target); err != nil {
+			return err
+		}
 		if e := d.post(ctx, releaseEvent{kind: 1, button: button, x: a.X, y: a.Y, count: i}, true); e != nil {
 			return e
 		}

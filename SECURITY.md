@@ -67,6 +67,69 @@ Do not post credentials, private screenshots, audit files or working configs in 
 
 A different foreground window permits at most one separately authorized preflight focus attempt for that view; it does not bypass the recovery guard, OS restrictions or process allowlists. A consumed or partial batch cannot be replayed. Success can return a new view with the already-delivered result, without a second capture. Timeouts and partial failures do not issue a new actionable view.
 
+Any separate MCP input attempt invalidates the previous unified view before its
+handler runs, including an attempt subsequently denied by policy or failing in
+the backend. Obtain a fresh `desktop_observe` after mixing input tools; read-only
+status/window queries preserve the view. `desktop_act` retains its own preflight
+and consumption rules. Unified observation holds the same input lane as actions
+so it cannot publish a view across concurrent server-controlled input. This
+serialization covers the MCP calls, not background capture or external UI
+changes; it does not make the native snapshot atomic. Emergency stop bypasses
+both lanes.
+
 Explicit native UI expectations are bounded structural checks: a title substring or complete, unambiguous control state. By default an already-satisfied condition refuses input; disabling require_transition weakens the predicate and is reported. A matching UI condition is not verification of application business state, a file, a shell command or an opponent move. Expected-state checks have no visual fallback pretending to be equivalent proof.
 
 Failure classifications and continuation are advisory only. They do not change policy or automatically replay input. Process-local metrics count calls, results and local elapsed time without storing screenshots, field values or typed content; they do not measure actual human intervention or provider token usage. Synthetic evaluations are labelled and cannot substitute for real GUI testing.
+
+## Optional native workflows and locator receipts
+
+`workflows:true` enables one process-local bounded workflow with an explicit
+deadline, action budget and native postcondition for every step. Each write uses
+the existing policy gate. Status/cancel bypass input lanes. Automatic write
+retries, coordinate replay and automatic refocus are absent. Resume is limited
+to a proven pre-input failure, preserves the original deadline and cannot repeat
+an uncertain action. Workflow plans remain in memory only; reports/journals omit
+typed text, UI labels, titles and error strings. Session stop cancels the worker.
+
+Optional UI memory stores only bounded keyed structural digests and verification
+receipts in a private local namespace, with TTL pruning and explicit clear.
+Receipts never authorize input; fresh complete unique native matching remains
+required. They do not contain field values, screenshots, coordinates or plans.
+Stored digests are not encryption or a boundary against same-user software.
+Physical TTL pruning occurs on cache access/open; offline files need a later
+open or operator cleanup. Windows storage uses protected native DACLs at creation,
+actual-handle owner/ACE checks and same-directory replacement. Existing broad ACLs
+are rejected rather than repaired; nonlocal/non-ACL filesystems and reparse paths
+are unsupported. Choose a trusted operator-controlled parent; administrators,
+LocalSystem and same-user software remain outside this isolation guarantee.
+Do not share a memory namespace among concurrent processes.
+
+`outcome.success` reports only its explicit native evidence. Visual changes or
+event posting alone remain ambiguous. Capability reporting describes implemented
+interfaces, separately from current permission and local authorization.
+
+Control-targeted actions carry internal expected metadata through the policy
+gate. After local review, the gate re-reads a complete bounded native tree,
+requires the original enabled control/bounds and selector uniqueness, and checks
+foreground/title again before posting. Client JSON cannot supply or bypass this
+internal proof. This reduces the approval-dialog race; it does not eliminate
+changes occurring between the final native read and OS event delivery.
+
+macOS control references now include bounded process-local AX object identity and
+window/document context when exposed by the application. A known identity or
+context may not disappear into structural fallback. After pointer approach,
+native-targeted clicks require an AX hit/parent chain reaching that same object.
+Document URLs and native handles are not exposed to MCP or persisted as locator
+strategies. Field writes check context before mutation and after readback.
+AXDocument absence is explicitly weaker native-window scope; external races and
+unreliable application accessibility providers remain outside an atomic guarantee.
+
+Workflow `wait_ms` waits on server completion, without model polling; journal
+cursors omit previously delivered events. RPC wait cancellation does not revoke
+the separately authorized bounded workflow; use workflow cancel or session stop.
+Native checks and action budgets apply equally with or without economical delivery.
+
+Workflow summary delivery omits successful journal rows while preserving terminal
+state, checkpoint, uncertainty and the latest failure. A running action marks
+input_may_have_posted before its native attempt and clears uncertainty only after
+verified checkpoint advancement. Omitted history is never permission to replay.

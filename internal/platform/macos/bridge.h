@@ -46,3 +46,5 @@ void *cv_ui_cancel_new(void);
 void cv_ui_cancel(void *cancel);
 
 char *cv_ui_controls(uint32_t window,int max_nodes,int timeout_ms);
+char *cv_ui_context(uint32_t window);
+int cv_ui_validate(uint32_t window,const char *expected_json,double x,double y,int timeout_ms,char **error);

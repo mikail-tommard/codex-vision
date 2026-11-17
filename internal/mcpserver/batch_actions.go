@@ -11,16 +11,21 @@ import (
 )
 
 type DesktopStep struct {
-	DelayBeforeMS int      `json:"delay_before_ms,omitempty" jsonschema:"Local pause before this predictable step, 0..1000ms; batch total at most 2000ms. Rechecks focus after waiting. Not a readiness or success check"`
-	TargetID      string   `json:"target_id,omitempty" jsonschema:"desktop_act only: short-lived control ID from desktop_observe; do not combine with x/y"`
-	Action        string   `json:"action" jsonschema:"click, move, scroll, press, hotkey or type. Only batch predictable steps; do not guess targets after navigation"`
-	X             int      `json:"x,omitempty"`
-	Y             int      `json:"y,omitempty"`
-	Delta         int      `json:"delta,omitempty" jsonschema:"scroll: nonzero multiple of 120, -1200..1200; negative scrolls down"`
-	Horizontal    bool     `json:"horizontal,omitempty"`
-	Key           string   `json:"key,omitempty" jsonschema:"press: canonical ENTER, ESCAPE, PAGEDOWN etc; not Return or Esc"`
-	Keys          []string `json:"keys,omitempty"`
-	Text          string   `json:"text,omitempty" jsonschema:"type: 1..4096 Unicode code points; batch total at most 16384 UTF-8 bytes. No automatic splitting or submission"`
+	expectedControl   *platform.UIControl
+	expectedContext   *platform.UIContext
+	uniqueSelector    bool
+	labelOnlySelector bool
+	Target            *ControlSelector `json:"target,omitempty" jsonschema:"desktop_act only: exact label and optional role from a fresh control-enabled observation"`
+	DelayBeforeMS     int              `json:"delay_before_ms,omitempty" jsonschema:"Local pause before this predictable step, 0..1000ms; batch total at most 2000ms. Rechecks focus after waiting. Not a readiness or success check"`
+	TargetID          string           `json:"target_id,omitempty" jsonschema:"desktop_act only: short-lived control ID from desktop_observe; do not combine with x/y"`
+	Action            string           `json:"action" jsonschema:"click, move, scroll, press, hotkey or type. Only batch predictable steps; do not guess targets after navigation"`
+	X                 int              `json:"x,omitempty"`
+	Y                 int              `json:"y,omitempty"`
+	Delta             int              `json:"delta,omitempty" jsonschema:"scroll: nonzero multiple of 120, -1200..1200; negative scrolls down"`
+	Horizontal        bool             `json:"horizontal,omitempty"`
+	Key               string           `json:"key,omitempty" jsonschema:"press: canonical ENTER, ESCAPE, PAGEDOWN etc; not Return or Esc"`
+	Keys              []string         `json:"keys,omitempty"`
+	Text              string           `json:"text,omitempty" jsonschema:"type: 1..4096 Unicode code points; batch total at most 16384 UTF-8 bytes. No automatic splitting or submission"`
 }
 type DesktopBatchArgs struct {
 	Expect         *ExpectedState `json:"expect,omitempty" jsonschema:"Optional exact native UI postcondition; mutually exclusive with ready_when"`
@@ -64,6 +69,9 @@ func (v *Service) prepareBatchOptions(a *DesktopBatchArgs) error {
 	}
 	if len(a.Steps) < 1 || len(a.Steps) > 12 {
 		return fmt.Errorf("steps must contain 1..12 actions")
+	}
+	if err := validateStepTargets(a.Steps); err != nil {
+		return err
 	}
 	delayMS := 0
 	for i, step := range a.Steps {
@@ -133,10 +141,14 @@ func (v *Service) runDesktopBatch(ctx context.Context, a DesktopBatchArgs, befor
 	steps := make([]platform.Action, 0, len(a.Steps))
 	textBytes := 0
 	for i, step := range a.Steps {
-		if step.TargetID != "" {
-			return nil, fmt.Errorf("target_id requires desktop_act and a fresh view_id")
+		if step.TargetID != "" || step.Target != nil {
+			return nil, fmt.Errorf("target and target_id require desktop_act and a fresh view_id")
 		}
 		act := platform.Action{WindowID: w.ID, Motion: a.Motion, X: step.X, Y: step.Y}
+		act.ControlExpected, act.ControlUniqueSelector = step.expectedControl, step.uniqueSelector
+		act.ContextExpected = step.expectedContext
+		act.ControlLabelOnly = step.labelOnlySelector
+		act.ControlMaxNodes = 1000
 		switch step.Action {
 		case "click":
 			act.Tool = "mouse_click"
