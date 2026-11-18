@@ -3,6 +3,37 @@
 Актуальный короткий backlog с приоритетами и командами продолжения:
 [NEXT_STEPS.md](NEXT_STEPS.md).
 
+## Обновление 0.14.4
+
+Добавлен experimental read-only ScreenCast/PipeWire через отдельный opt-in и
+установленный GStreamer. Native path создаёт одноразовую portal session, выбирает
+один source с системным согласием, получает isolated FD и использует стабильный
+serial. Duration/frame budgets обязательны; latest-only кадры запрашиваются
+явно, дубли подавляются. Revocation/stop очищают кадры, failed cleanup запрещает
+новый native source. Desktop mapping и input не добавлены.
+
+Парный MCP mock A,A,A,B,B: 5→2 images, 7770→3108 raw image bytes,
+пример result JSON 12585→6380 bytes, 5 pulls в обоих вариантах. Native timing и
+Codex usage не измерены. Linux portal/GStreamer и реальный compositor здесь
+не запускались; воспроизводимый opt-in test и ограничения описаны в
+[wayland-screencast.md](wayland-screencast.md). Native API требует portal v6+.
+
+## Обновление 0.14.3
+
+Реализованы opt-in discovery cache и подавление повторного дерева по ревизии;
+targeting/readiness/verification кэш не используют. `ui_controls` доступен в
+compact без изображения. Добавлены verified workflow recipes только в RAM
+(8/15min/32KiB), повторный запуск с fresh targets и wait steps без ввода.
+Парные synthetic measurements: result JSON 34320→7908 bytes/tree reads 5→1;
+повторный workflow request 260→159 bytes. Каталог/transport/реальные Codex tokens
+в эти числа не входят. API и ограничения: [economy-0143.md](economy-0143.md).
+
+Wayland начат отдельным opt-in Screenshot portal backend (D-Bus): системный
+интерактивный запрос, отмена, timeout, stop, bounded local file decode. Desktop
+mapping, window discovery, streaming/PipeWire и input не реализованы; compact
+предлагает только capture/status/stop. Real compositor не проверялся.
+Исторический аудит и предыдущие итерации ниже не описывают текущую полноту функций.
+
 ## Область аудита
 
 Аудит локального исходного дерева версии `0.13.6`, 2026-11-17. Изучены README,

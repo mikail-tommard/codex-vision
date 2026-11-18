@@ -2,6 +2,22 @@
 
 Версия работающего сервера доступна в `session_status.server.version`. Эта история описывает возможности исходного кода; наличие записи не означает публикацию готовых бинарников или проверку каждого приложения вживую.
 
+## 0.14.4
+
+- Experimental opt-in Wayland ScreenCast/PipeWire: `screencast_control` start/next/status/stop, explicit duration/frame budgets, system source selection, JPEG delivery only on explicit pulls and exact pixel deduplication. No desktop mapping or input.
+- Native portal calls pin owner/request/session, watch Session.Closed and owner loss, use non-persistent single-source consent and stable PipeWire serial targeting. Portal v6+ and installed GStreamer plugins required; no automatic install or node-ID/reconnect fallback.
+- Stop/cancel/deadline/frame budget close the stream; revoked sessions discard cached pixels. Pulls are serialized; cleanup failure blocks new capture sessions instead of accumulating child processes.
+- Paired MCP mock: 5→2 images, 7770→3108 raw JPEG bytes, example CallToolResult JSON 12585→6380 bytes for A,A,A,B,B. Both strategies use 5 pulls; no real Codex usage/GUI timing measured.
+- Added portable manager/MCP/PNG tests and explicit Linux-only native capture integration opt-in. Real compositor, portal consent and GStreamer execution remain unverified here. See `docs/wayland-screencast.md`.
+
+## 0.14.3
+
+- `ui_controls` в compact: revision-based подавление повторного дерева и явный RAM discovery cache 0..2000ms. Input/focus/context/stop инвалидируют кэш; targeting/readiness/verification всегда читают свежие данные.
+- UI memory: до 8 успешно проверенных semantic workflow recipes в RAM на 15 минут, повторный запуск по короткому ID с новыми budgets и fresh targets. Без typed text/keyboard; планы не сохраняются на диск. Clear/stop отзывают in-flight learning.
+- Workflow wait steps проверяют native condition без ввода и изображений.
+- Opt-in Wayland Screenshot portal через D-Bus, interactive consent, bounded requests, отказ/отмена/stop и проверка local image URI. Только single-shot capture; ScreenCast/PipeWire/RemoteDesktop input не реализованы, реальный compositor здесь не проверялся.
+- Парные mock-измерения: discovery responses 34320→7908 bytes, tree reads 5→1; повторный workflow request 260→159 bytes. Это не Codex tokens/квота; детали в `docs/economy-0143.md`.
+
 ## 0.14.2
 
 - UI memory Windows: native protected owner/SYSTEM DACL при создании directory/temp files, проверка actual-handle ACL/owner и private replacement через MoveFileEx. Broad/inherited/NULL ACL, reparse/hardlinks, ADS и nonlocal/non-ACL volumes отвергаются; существующие права не изменяются.

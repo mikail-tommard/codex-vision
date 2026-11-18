@@ -44,7 +44,7 @@ type Desktop struct {
 
 func New() (*Desktop, error) {
 	if os.Getenv("XDG_SESSION_TYPE") == "wayland" || (os.Getenv("XDG_SESSION_TYPE") != "x11" && os.Getenv("WAYLAND_DISPLAY") != "") {
-		return nil, fmt.Errorf("Wayland desktop control requires a consent-based portal backend; XWayland is not a full desktop; use an X11 session")
+		return nil, fmt.Errorf("Wayland input requires a RemoteDesktop portal backend; XWayland is not a full desktop. Opt-in single screenshots: CODEX_VISION_WAYLAND_PORTAL=1; use X11 for existing desktop control")
 	}
 	display := os.Getenv("DISPLAY")
 	if display == "" {

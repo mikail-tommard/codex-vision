@@ -8,12 +8,29 @@ import (
 
 	"example.com/codex-vision/internal/config"
 	"example.com/codex-vision/internal/platform"
+	"example.com/codex-vision/internal/platform/mock"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type countedControlsDesktop struct {
 	*agentDesktop
 	reads atomic.Int64
+}
+
+func TestCompactOmitsUnsupportedControlDiscovery(t *testing.T) {
+	c, _ := connectProfileDesktop(t, config.Default(), &mock.Desktop{}, "compact")
+	listed, err := c.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Tools) != 12 {
+		t.Fatal("unsupported controls inflated catalog", len(listed.Tools))
+	}
+	for _, tool := range listed.Tools {
+		if tool.Name == "ui_controls" {
+			t.Fatal("unimplemented control discovery advertised")
+		}
+	}
 }
 
 func (d *countedControlsDesktop) ReadControls(ctx context.Context, w platform.Window, n int) (platform.ControlSnapshot, error) {
@@ -31,7 +48,7 @@ func TestCompactCatalogAndWireResponses(t *testing.T) {
 			}
 			want := 29
 			if profile == "compact" {
-				want = 12
+				want = 13
 			}
 			if len(listed.Tools) != want {
 				t.Fatalf("got %d tools, want %d", len(listed.Tools), want)

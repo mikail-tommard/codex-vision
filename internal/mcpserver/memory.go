@@ -17,6 +17,8 @@ func (v *Service) memoryStatus() map[string]any {
 		return map[string]any{"enabled": false, "error": fault}
 	}
 	status := v.memory.Stats()
+	status["workflow_recipes"] = v.recipes.count()
+	status["recipe_scope"] = "current server RAM only; at most 8 verified recipes, 15 minute TTL; no typed text or keys"
 	status["enabled"] = true
 	if fault != "" {
 		status["error"] = fault
@@ -57,7 +59,7 @@ func (v *Service) registerMemory(server *mcp.Server) {
 	type args struct {
 		Action string `json:"action" jsonschema:"status or clear; clear erases only the current configured memory cache"`
 	}
-	bind(server, v, "ui_memory_control", "Opt-in local hashed verified-locator receipts. No labels, values, coordinates, screenshots or workflow plans on disk. A memory hit never authorizes input or bypasses a fresh native control read. status reports counts; clear removes stored receipts for the configured cache.", false, func(_ context.Context, a args) (*mcp.CallToolResult, error) {
+	bind(server, v, "ui_memory_control", "Opt-in hashed locator receipts on disk and verified workflow recipes in session RAM only. No UI labels, values, images or plans on disk. Memory never authorizes input. status reports counts; clear removes receipts and recipes and revokes in-flight recipe learning.", false, func(_ context.Context, a args) (*mcp.CallToolResult, error) {
 		if a.Action != "status" && a.Action != "clear" {
 			return nil, fmt.Errorf("memory action must be status or clear")
 		}
@@ -65,6 +67,7 @@ func (v *Service) registerMemory(server *mcp.Server) {
 			return nil, fmt.Errorf("UI memory unavailable; check local session_status diagnostics")
 		}
 		if a.Action == "clear" {
+			v.recipes.clear() // Also revokes in-flight learning before disk I/O.
 			if err := v.memory.Clear(); err != nil {
 				v.memoryFailure(err)
 				return nil, fmt.Errorf("UI memory clear failed")

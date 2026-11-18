@@ -3,6 +3,7 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"time"
@@ -123,6 +124,28 @@ type Desktop interface {
 	Execute(context.Context, Action) error
 	Release() error
 }
+
+// ConsentedScreenshot is a single portal-selected image, without a desktop
+// coordinate mapping. It cannot back coordinate input or continuous observation.
+type ConsentedScreenshot interface {
+	Screenshot(context.Context) (image.Image, error)
+	StopCapture()
+}
+
+// ScreenCastSource owns a consented pixel stream, with no desktop coordinates.
+// Next obeys cancellation; Close is concurrent-safe, idempotent and unblocks Next.
+type ScreenCastSource interface {
+	Next(context.Context) (image.Image, error)
+	Done() <-chan struct{}
+	Close() error
+}
+
+type ScreenCaster interface {
+	StartScreenCast(context.Context) (ScreenCastSource, error)
+}
+
+var ErrCaptureDenied = errors.New("system portal capture cancelled or denied")
+var ErrCaptureUnsupported = errors.New("required screen capture protocol unavailable")
 
 // CoordinateSpace lets a backend describe Retina/logical coordinate units.
 func CoordinateSpace(d Desktop) string {

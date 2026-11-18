@@ -16,5 +16,17 @@ func Capabilities(d Desktop) map[string]any {
 		}
 		inputs[name] = supported
 	}
-	return map[string]any{"backend": d.Name(), "capture": true, "controls": controls, "fields": fields, "ui_context": context, "cursor_position": cursor, "local_review": approval, "input": inputs, "native_ui_events": false, "scope": "implemented interfaces; OS permissions, session and policy still apply"}
+	out := map[string]any{"backend": d.Name(), "capture": true, "controls": controls, "fields": fields, "ui_context": context, "cursor_position": cursor, "local_review": approval, "input": inputs, "native_ui_events": false, "scope": "implemented interfaces; OS permissions, session and policy still apply"}
+	if _, ok := d.(ConsentedScreenshot); ok {
+		out["capture_mode"] = "consented_portal_single_shot"
+		out["coordinate_mapping_available"] = false
+		out["continuous_observation"] = false
+		out["window_discovery"] = false
+		out["monitor_geometry"] = false
+	}
+	if _, ok := d.(ScreenCaster); ok {
+		out["portal_screencast"] = true
+		out["screencast_requires"] = "ScreenCast v6, stable PipeWire serial, installed GStreamer plugins and system consent; no desktop mapping/input"
+	}
+	return out
 }

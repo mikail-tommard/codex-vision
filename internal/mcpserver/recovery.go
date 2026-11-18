@@ -168,6 +168,9 @@ func (v *Service) sessionStatus() *mcp.CallToolResult {
 	status["metrics"] = v.metrics.snapshot()
 	status["stage_metrics"] = v.performance.snapshot()
 	status["capabilities"] = platform.Capabilities(v.Desktop)
+	if _, ok := v.Desktop.(platform.ScreenCaster); ok {
+		status["screencast"] = v.Cast.Status()
+	}
 	if v.Config.UIMemoryDirectory != "" {
 		status["ui_memory"] = v.memoryStatus()
 	}

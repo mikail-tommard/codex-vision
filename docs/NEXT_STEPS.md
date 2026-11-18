@@ -1,4 +1,4 @@
-# Что осталось завершить после 0.14.2
+# Что осталось завершить после 0.14.4
 
 Это рабочий backlog. Полный журнал реализованного и границы проверок:
 [IMPROVEMENT_ROADMAP.md](IMPROVEMENT_ROADMAP.md). Форматы API и opt-in flags:
@@ -46,22 +46,27 @@ write. Native IDs и document URLs не увеличивают агентски�
 
 ## P1 — производительность и расход контекста
 
-- [ ] Безопасный discovery cache с инвалидацией при input/focus/context/event;
-  cached data не заменяют fresh write authorization.
+- [x] Ограниченный discovery cache с инвалидацией при input/focus/context/stop
+  и revisions без повторной выдачи controls; fresh write authorization сохранён.
+- [ ] Native UI events для более ранней инвалидации cache; пока TTL 0..2000ms
+  включается явно, внешние изменения внутри того же context могут ждать TTL.
 - [ ] Сокращение full-screen native capture там, где достаточно выбранного region;
   измерить качество текста при adaptive resolution/compression.
 - [ ] Парные реальные сценарии: latency, captures, MCP calls, images и serialized
   response bytes. Отдельно наблюдать usage клиента Codex, если оно доступно.
 - [ ] Regression budgets для catalogue size, повторных metadata/journal и изображений.
 
-Уже доступно: compact profile, wait_ms, after_event и detail=summary. Не менять
+Уже доступно: compact profile, wait_ms, after_event, detail=summary, discovery
+revisions/cache и RAM recipe_id. Измерения/границы: [economy-0143.md](economy-0143.md). Не менять
 безопасность ради меньшего payload. Байты/MCP-вызовы не выдавать за точные токены,
 проценты лимита или стоимость Codex.
 
 ## P2 — полноценная UI memory
 
-- [ ] Хранить безопасные reusable UI structures/locator strategies и шаблоны
-  успешных сценариев; сейчас есть только hashed verified-locator receipts.
+- [x] Session-only reusable semantic workflow templates в RAM: до 8 verified
+  plans, TTL 15min, clear/stop, без typed text/keyboard, fresh targets при запуске.
+- [ ] Reusable UI structures/locator strategies и безопасные disk templates;
+  сейчас disk хранит только hashed verified-locator receipts, recipes — только RAM.
 - [ ] Измерить реальное ускорение повторных операций; сейчас оно не заявляется.
 - [ ] Продумать физическое удаление expired data без обращения к cache; сейчас
   TTL pruning выполняется при open/access.
@@ -73,6 +78,7 @@ write. Native IDs и document URLs не увеличивают агентски�
 
 ## P2 — расширение workflow
 
+- [x] Wait steps для native postconditions без ввода и screenshots.
 - [ ] App launch, несколько окон, scroll/drag с отдельными проверками целей.
 - [ ] Безопасные переменные/шаблоны и восстановление checkpoint после restart.
 - [ ] Расширить observable postconditions без произвольного кода и чтения secure
@@ -83,18 +89,33 @@ write. Native IDs и document URLs не увеличивают агентски�
 
 ## P3 — Wayland
 
-- [ ] Отдельный backend ScreenCast/RemoteDesktop portals + PipeWire и явное
-  системное согласие на capture/input.
+- [x] Opt-in single-shot Screenshot portal с interactive consent, bounded URI/image,
+  cancel/timeout/stop, отдельным compact-каталогом и отсутствием desktop mapping.
+- [ ] Реально проверить consent/cancel/stop на Wayland/compositor; пока mock tests
+  и cross-build, а native Linux-specific tests требуют Linux runtime.
+- [x] Experimental ScreenCast/PipeWire path через отдельный opt-in, portal v6,
+  stable serial и установленный GStreamer. Один source, duration/frame limits,
+  явные pulls/dedup, revocation/stop/failed-cleanup handling. Без input/mapping.
+- [ ] Выполнить `TestNativeScreenCastIntegration` на Linux с реальным portal;
+  проверить Cancel, revocation, node loss/hotplug и отсутствие child после stop.
+  Здесь прошли mocks/framing; native protocol только cross-compiled/vetted.
+- [ ] RemoteDesktop portal/input с отдельным согласием и доказуемым mapping;
+  capture-согласие не считать разрешением на ввод.
+- [ ] Проверить практическую доступность portal v6/plugins и измерить CPU/RSS,
+  latency/читаемость текста; не ослаблять serial binding ради старого node ID.
 - [ ] Capability/error/session/cancellation tests; XWayland не считать полной
-  поддержкой Wayland. До реализации возвращать unsupported.
+  поддержкой Wayland. Для ещё не реализованных функций возвращать unsupported.
 
 ## С чего продолжить разработку
 
 1. Выполнить доступные P0 проверки, не заявляя отсутствующее окружение проверенным.
 2. Реализовать Windows UIA discovery отдельным небольшим изменением.
 3. Выполнить tests/race/vet и relevant builds, обновить этот checklist и roadmap.
-4. Держать full compatibility; новые тяжёлые/системные возможности включать явно.
+4. Для приоритетов economy/memory/Wayland: реальные парные сценарии, UI events,
+   privacy-safe locator strategies, live validation ScreenCast/PipeWire, затем
+   RemoteDesktop. Порядок/команды: [wayland-screencast.md](wayland-screencast.md).
+5. Держать full compatibility; новые тяжёлые/системные возможности включать явно.
 
 Локальные конфиги, их backup, audit/state, preview URLs, screenshots и binaries
-не коммитить. Последняя реализация: 0.14.2; все известные оставшиеся задачи выше
-открыты, наличие roadmap не означает их выполнение.
+не коммитить. Последняя реализация: 0.14.4; открытые пункты выше не выполнены,
+наличие roadmap не означает их выполнение.

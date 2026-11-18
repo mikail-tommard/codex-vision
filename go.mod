@@ -3,6 +3,7 @@ module example.com/codex-vision
 go 1.26.5
 
 require (
+	github.com/godbus/dbus/v5 v5.2.4
 	github.com/google/jsonschema-go v0.4.3
 	github.com/modelcontextprotocol/go-sdk v1.6.0
 	golang.org/x/sys v0.46.0

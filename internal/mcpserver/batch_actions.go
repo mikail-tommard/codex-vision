@@ -18,7 +18,7 @@ type DesktopStep struct {
 	Target            *ControlSelector `json:"target,omitempty" jsonschema:"desktop_act only: exact label and optional role from a fresh control-enabled observation"`
 	DelayBeforeMS     int              `json:"delay_before_ms,omitempty" jsonschema:"Local pause before this predictable step, 0..1000ms; batch total at most 2000ms. Rechecks focus after waiting. Not a readiness or success check"`
 	TargetID          string           `json:"target_id,omitempty" jsonschema:"desktop_act only: short-lived control ID from desktop_observe; do not combine with x/y"`
-	Action            string           `json:"action" jsonschema:"click, move, scroll, press, hotkey or type. Only batch predictable steps; do not guess targets after navigation"`
+	Action            string           `json:"action" jsonschema:"click, move, scroll, press, hotkey or type; workflow also supports wait. Do not guess targets after navigation"`
 	X                 int              `json:"x,omitempty"`
 	Y                 int              `json:"y,omitempty"`
 	Delta             int              `json:"delta,omitempty" jsonschema:"scroll: nonzero multiple of 120, -1200..1200; negative scrolls down"`

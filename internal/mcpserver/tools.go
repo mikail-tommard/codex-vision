@@ -80,8 +80,17 @@ type FocusArgs struct {
 }
 
 func bind[T any](s *mcp.Server, svc *Service, name, desc string, read bool, fn func(context.Context, T) (*mcp.CallToolResult, error)) {
-	if svc.Config.ToolProfile == "compact" && !compactTool(name) {
-		return
+	if _, portal := svc.Desktop.(platform.ConsentedScreenshot); portal && name == "screen_capture" {
+		desc = "Request one screenshot via the system portal consent dialog. No desktop coordinate mapping or input. Default JPEG quality 75, max_width 768; set explicit encoding for more detail. Cancellation is final; never automatically repeat consent requests."
+	}
+	if svc.Config.ToolProfile == "compact" {
+		if _, portal := svc.Desktop.(platform.ConsentedScreenshot); portal {
+			if name != "screen_capture" && name != "session_status" && name != "session_stop" && name != "screencast_control" {
+				return
+			}
+		} else if !compactTool(name) {
+			return
+		}
 	}
 	schema, err := jsonschema.For[T](nil)
 	if err != nil {
@@ -138,6 +147,9 @@ func bind[T any](s *mcp.Server, svc *Service, name, desc string, read bool, fn f
 			constrain(def)
 		}
 	}
+	if name == "screencast_control" {
+		schema.Properties["action"].Enum = []any{"start", "next", "status", "stop"}
+	}
 	if name == "ui_memory_control" {
 		schema.Properties["action"].Enum = []any{"status", "clear"}
 	}
@@ -182,6 +194,7 @@ func bind[T any](s *mcp.Server, svc *Service, name, desc string, read bool, fn f
 		// desktop_act owns its consume-before-input lifecycle, including its
 		// single authorized preflight focus and validation-only failures.
 		if inputTool(name) && name != "desktop_act" {
+			svc.discovery.invalidate()
 			svc.views.mu.Lock()
 			svc.views.current = nil
 			svc.views.mu.Unlock()
@@ -235,6 +248,9 @@ func (v *Service) register(s *mcp.Server) {
 		return result(map[string]any{"monitors": m, "virtual_bounds": b, "coordinate_space": platform.CoordinateSpace(v.Desktop), "backend": v.Desktop.Name()}), e
 	})
 	bind(s, v, "screen_capture", "Return image and coordinate metadata. Empty monitor_id captures virtual desktop. Cannot verify client display.", true, func(ctx context.Context, a CaptureArgs) (*mcp.CallToolResult, error) {
+		if d, ok := v.Desktop.(platform.ConsentedScreenshot); ok {
+			return v.capturePortal(ctx, d, a)
+		}
 		ms, e := v.Desktop.Monitors(ctx)
 		if e != nil {
 			return nil, e

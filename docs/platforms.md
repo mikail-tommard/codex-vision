@@ -86,7 +86,52 @@ cp configs/config.example.json config.json
 
 ### Wayland
 
-Полный Wayland backend **ещё не реализован**. XWayland не даёт доступ ко всем Wayland-окнам. Нужны отдельные ScreenCast/RemoteDesktop portals, PipeWire и явное системное согласие на выбранный экран/ввод; новая X11-реализация этого не добавляет. Не требуется `xhost +`, доступ root или изменение правил безопасности. До реализации portal-backend используйте «Ubuntu on Xorg».
+С версии 0.14.3 доступен **частичный opt-in backend**: одиночный `screen_capture`
+через [Screenshot portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Screenshot.html).
+Нужны работающая локальная Wayland-сессия, Unix session D-Bus и Screenshot portal
+версии 2+. Ничего не устанавливается и не запускается автоматически.
+
+```sh
+CODEX_VISION_WAYLAND_PORTAL=1 ./bin/codex-vision-linux-amd64 --config configs/config.example.json
+```
+
+Это переменная окружения **сервера MCP**, а не аргумент инструмента. В X11 она
+не меняет backend. Без opt-in Wayland по-прежнему явно отвергается.
+Compact-каталог содержит только `screen_capture`, `session_status`, `session_stop`.
+`screen_capture {}` отправляет системный интерактивный запрос; для ответа человеку
+может потребоваться локальный `timeout_ms:30000`. По умолчанию агент получает
+JPEG quality 75, шириной до 768; для текста задайте `format:"png",max_width:1920`.
+Отмена/отказ не запускают повторный запрос. `--doctor` не открывает диалог и не
+утверждает доступность capture до фактического согласия.
+Сервер задаёт `interactive:true`; показ диалога и использование ранее выданного
+разрешения определяет портал/compositor, не агент.
+
+У изображения **нет достоверного соответствия desktop-координатам**: пользователь
+может выбрать окно/область, а compositor использует собственный scaling. Поэтому
+monitor geometry, окна, `screen_region`, observation stream, workflow и любой
+ввод здесь unsupported. Full-каталог сохраняет инструменты, но неподдерживаемые
+операции возвращают ошибку. XWayland fallback не используется.
+
+Request подписывается до вызова, проверяет owner/path ответа и закрывается при
+завершении/таймауте/отмене. Emergency stop и stop-file отменяют ожидание.
+URI принимается только локальный `file:`; bounded regular image проверяется до
+decode. Native Linux open запрещает symlink конечного файла и блокировку на FIFO.
+Путь/URI не входят в MCP-метаданные и audit. Файл создаёт и хранит портал:
+сервер не копирует его в memory/logs и не удаляет произвольные portal-файлы.
+
+В 0.14.4 добавлен отдельный opt-in **experimental ScreenCast/PipeWire**:
+[настройка, API и проверки](wayland-screencast.md). Он требует portal v6+ и
+установленный GStreamer, включается вторым флагом и не добавляет desktop input.
+RemoteDesktop input остаётся отдельным этапом. Реальное
+взаимодействие с Wayland/compositor здесь не проверено; mock-тесты и cross-build
+этого не заменяют. Для ручной проверки в Linux выполните:
+
+```sh
+go test ./internal/platform/wayland -count=1 -v
+```
+
+Затем через MCP проверьте один согласованный снимок, Cancel, истечение timeout,
+stop во время диалога, отсутствие URI в ответе и отказ desktop/input инструментов.
 
 Семантика проверок и команд: [loginctl](https://www.freedesktop.org/software/systemd/man/latest/loginctl.html), [xdotool](https://github.com/jordansissel/xdotool/blob/main/xdotool.pod).
 

@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"example.com/codex-vision/internal/platform"
 	"os"
 	"runtime"
 	"time"
@@ -17,7 +18,15 @@ func nativeDoctor(request bool) error {
 		out["available"] = false
 		out["error"] = e.Error()
 	} else {
+		defer d.Release()
 		out["backend"] = d.Name()
+		if _, portal := d.(platform.ConsentedScreenshot); portal {
+			out["available"] = nil
+			out["availability_verified"] = false
+			out["capabilities"] = platform.Capabilities(d)
+			out["reason"] = "portal capture requires an explicit screen_capture and system consent; doctor does not open the dialog"
+			return json.NewEncoder(os.Stdout).Encode(out)
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if diagnostic, ok := d.(interface {

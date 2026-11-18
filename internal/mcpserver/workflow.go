@@ -19,6 +19,8 @@ type WorkflowStep struct {
 }
 
 type WorkflowArgs struct {
+	RecipeID   string         `json:"recipe_id,omitempty" jsonschema:"start only: reuse an unexpired verified session recipe instead of steps; explicit window and budgets remain required"`
+	Remember   bool           `json:"remember,omitempty" jsonschema:"start only, opt-in UI memory required: retain a successful click/move/wait plan in RAM for 15 minutes; no typed text or keyboard actions"`
 	Detail     string         `json:"detail,omitempty" jsonschema:"full (default) or summary: omit successful journal rows, preserve current state/checkpoint and last failure. Cannot combine summary with after_event"`
 	WaitMS     int            `json:"wait_ms,omitempty" jsonschema:"0..30000: wait locally for this run to finish; start/status/resume only, bounded by remaining MCP timeout. No model polling"`
 	AfterEvent *int           `json:"after_event,omitempty" jsonschema:"Return journal entries after event_cursor from the previous report; start permits only 0. Omit for the legacy full journal"`
@@ -38,6 +40,7 @@ type WorkflowEvent struct {
 }
 
 type WorkflowReport struct {
+	RecipeID           string          `json:"recipe_id,omitempty"`
 	JournalMode        string          `json:"journal_mode,omitempty"`
 	EventCursor        int             `json:"event_cursor"`
 	ID                 string          `json:"workflow_id"`
@@ -52,12 +55,14 @@ type WorkflowReport struct {
 }
 
 type workflowState struct {
-	mu     sync.Mutex
-	report WorkflowReport
-	plan   []WorkflowStep // Memory only; never returned, persisted or logged.
-	window platform.Window
-	cancel context.CancelFunc
-	done   chan struct{}
+	mu          sync.Mutex
+	report      WorkflowReport
+	plan        []WorkflowStep // Memory only; never returned, persisted or logged.
+	window      platform.Window
+	cancel      context.CancelFunc
+	done        chan struct{}
+	remember    bool
+	memoryEpoch uint64
 }
 
 func (w *workflowState) snapshot() WorkflowReport {
@@ -78,6 +83,11 @@ func workflowAction(step DesktopStep, windowID string) (platform.Action, error) 
 		return a, err
 	}
 	switch step.Action {
+	case "wait":
+		if step.Target != nil || step.Key != "" || len(step.Keys) > 0 || step.Text != "" || step.Delta != 0 || step.Horizontal {
+			return a, fmt.Errorf("workflow wait accepts only an observable expectation")
+		}
+		return a, nil
 	case "click", "move":
 		if step.Target == nil {
 			return a, fmt.Errorf("workflow click/move requires target label and optional role")
@@ -103,6 +113,9 @@ func workflowAction(step DesktopStep, windowID string) (platform.Action, error) 
 }
 
 func (v *Service) workflowControl(ctx context.Context, a WorkflowArgs) (*mcp.CallToolResult, error) {
+	if len(a.RecipeID) > 64 {
+		return nil, fmt.Errorf("recipe_id exceeds 64 bytes")
+	}
 	if a.Detail != "" && a.Detail != "full" && a.Detail != "summary" {
 		return nil, fmt.Errorf("workflow detail must be full or summary")
 	}
@@ -115,10 +128,26 @@ func (v *Service) workflowControl(ctx context.Context, a WorkflowArgs) (*mcp.Cal
 	if a.Action == "start" && a.AfterEvent != nil && *a.AfterEvent != 0 {
 		return nil, fmt.Errorf("new workflow after_event must be 0")
 	}
-	if a.Action != "start" && (a.WindowID != "" || len(a.Steps) > 0 || a.TimeoutMS != 0 || a.MaxActions != 0) {
+	if a.Action != "start" && (a.WindowID != "" || len(a.Steps) > 0 || a.TimeoutMS != 0 || a.MaxActions != 0 || a.RecipeID != "" || a.Remember) {
 		return nil, fmt.Errorf("workflow plan and budgets apply only to start")
 	}
 	if a.Action == "start" {
+		if a.RecipeID != "" && (len(a.Steps) > 0 || a.Remember) {
+			return nil, fmt.Errorf("choose recipe_id or steps/remember")
+		}
+		if a.RecipeID != "" {
+			if v.memory == nil {
+				return nil, fmt.Errorf("workflow recipe memory unavailable")
+			}
+			w, err := v.agentWindow(ctx, a.WindowID)
+			if err != nil {
+				return nil, err
+			}
+			a.Steps, err = v.recipes.load(a.RecipeID, w.Process)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if a.ID != "" || a.WindowID == "" || a.MaxActions < 1 || a.MaxActions > 50 || len(a.Steps) < 1 || len(a.Steps) > a.MaxActions || a.TimeoutMS < 1000 || a.TimeoutMS > 300000 {
 			return nil, fmt.Errorf("start requires window_id, 1..50 bounded steps, explicit max_actions and timeout_ms 1000..300000")
 		}
@@ -137,6 +166,14 @@ func (v *Service) workflowControl(ctx context.Context, a WorkflowArgs) (*mcp.Cal
 		}
 		if textBytes > 16384 {
 			return nil, fmt.Errorf("workflow text exceeds 16384 bytes")
+		}
+		if a.Remember {
+			if v.memory == nil {
+				return nil, fmt.Errorf("remember requires enabled UI memory")
+			}
+			if _, err := recipePlan(a.Steps); err != nil {
+				return nil, err
+			}
 		}
 		if err := v.Session.ObservationError(); err != nil {
 			return nil, err
@@ -165,6 +202,7 @@ func (v *Service) workflowControl(ctx context.Context, a WorkflowArgs) (*mcp.Cal
 		}
 		v.workflows.report = WorkflowReport{ID: id, State: "running", Total: len(plan), Deadline: time.Now().Add(time.Duration(a.TimeoutMS) * time.Millisecond)}
 		v.workflows.plan, v.workflows.window = plan, window
+		v.workflows.remember, v.workflows.memoryEpoch = a.Remember, v.recipes.generation()
 		v.launchWorkflowLocked()
 		v.workflows.mu.Unlock()
 		a.ID = id
@@ -294,6 +332,9 @@ func (v *Service) runWorkflow(ctx context.Context, cancel context.CancelFunc, do
 		i := v.workflows.report.Checkpoint
 		if i == len(v.workflows.plan) {
 			v.workflows.report.State, v.workflows.report.Resumable = "success", false
+			if v.workflows.remember {
+				v.workflows.report.RecipeID = v.recipes.save(v.workflows.plan, v.workflows.window.Process, v.workflows.memoryEpoch)
+			}
 			v.workflows.plan = nil
 			v.workflows.mu.Unlock()
 			return
@@ -376,7 +417,11 @@ func (v *Service) runWorkflowStep(ctx context.Context, pinned platform.Window, s
 		}
 		a.ContextExpected = &context
 	}
-	expected, err := v.prepareExpectation(ctx, w, &step.Expect, 100*time.Millisecond)
+	spec := step.Expect
+	if step.Step.Action == "wait" {
+		spec.RequireTransition = ptr(false)
+	}
+	expected, err := v.prepareExpectation(ctx, w, &spec, 100*time.Millisecond)
 	if err != nil {
 		return false, err
 	}
@@ -396,38 +441,41 @@ func (v *Service) runWorkflowStep(ctx context.Context, pinned platform.Window, s
 		a.ControlExpected, a.ControlUniqueSelector, a.ControlMaxNodes = &target, true, 1000
 		a.ControlLabelOnly = step.Step.Target.Role == ""
 	}
-	v.views.mu.Lock()
-	v.views.current = nil
-	v.views.mu.Unlock()
-	// A running report must not claim "no uncertain input" while native
-	// execution or postcondition verification is pending. Clear only after the
-	// checkpoint is verified, or replace with the proven pre-input error state.
-	v.workflows.mu.Lock()
-	v.workflows.report.InputMayHavePosted = true
-	v.workflows.mu.Unlock()
-	if _, err = v.action(ctx, a); err != nil {
-		return true, err // Even native failure may mean partial delivery; never retry.
+	posted := step.Step.Action != "wait"
+	if posted {
+		v.views.mu.Lock()
+		v.views.current = nil
+		v.views.mu.Unlock()
+		// A running report must not claim "no uncertain input" while native
+		// execution or postcondition verification is pending. Clear only after the
+		// checkpoint is verified, or replace with the proven pre-input error state.
+		v.workflows.mu.Lock()
+		v.workflows.report.InputMayHavePosted = true
+		v.workflows.mu.Unlock()
+		if _, err = v.action(ctx, a); err != nil {
+			return true, err // Even native failure may mean partial delivery; never retry.
+		}
 	}
 	for {
 		if err := v.Session.ObservationError(); err != nil {
-			return true, err
+			return posted, err
 		}
 		if err := ctx.Err(); err != nil {
-			return true, err
+			return posted, err
 		}
 		matched, err := expected.observe(ctx)
 		if err != nil {
-			return true, err
+			return posted, err
 		}
 		if matched {
-			return true, nil
+			return posted, nil
 		}
 		if err := waitBatchDelay(ctx, 50*time.Millisecond); err != nil {
-			return true, err
+			return posted, err
 		}
 	}
 }
 
 func (v *Service) registerWorkflow(server *mcp.Server) {
-	bind(server, v, "workflow_control", "Opt-in native-UI workflow with explicit window, deadline, action budget and per-step postconditions. Prefer wait_ms and detail=summary to avoid polling/repeated journals; after_event=event_cursor returns deltas. Status without ID finds latest run. Cancel/stop remain available. No screenshots, automatic refocus or uncertain replay. Resume only pre-input failure within original deadline. Reports omit UI text and plan.", false, v.workflowControl)
+	bind(server, v, "workflow_control", "Bounded native-UI workflow: fresh semantic targets and per-step postconditions; wait steps post no input. Prefer wait_ms/detail=summary. remember stores verified click/move/wait plans in opt-in session RAM; recipe_id reuses them with explicit window/budgets and all safety checks. No screenshots, automatic refocus or uncertain replay. Resume only pre-input failure within original deadline. Reports omit UI text and plan.", false, v.workflowControl)
 }

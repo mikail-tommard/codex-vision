@@ -228,10 +228,16 @@ CallToolResult с base64 и выбранным compact/full encoding, без JSO
 `session_status.capabilities` явно сообщает реализованные native интерфейсы.
 Supported не означает выданные OS permissions или локальное разрешение.
 `native_ui_events:false` означает bounded polling для AX, а не имитацию подписки.
-UIA/AT-SPI и Wayland portals этим изменением не добавлены. Проверки mock и
+UIA/AT-SPI этим изменением не добавлены. В 0.14.3 появился opt-in Wayland
+Screenshot portal без streaming/input: [платформы](platforms.md#wayland). Проверки mock и
 cross-build не считаются интерактивными тестами реального desktop.
 
 ## Воспроизводимые проверки
+
+В 0.14.3 добавлены discovery revisions/cache, session workflow recipes и wait
+steps: [API, privacy boundaries и парные измерения](economy-0143.md).
+В 0.14.4 добавлен отдельный read-only Wayland stream без desktop mapping:
+[ScreenCast API, budgets, dedup и проверки](wayland-screencast.md).
 
 Экономный режим: оставляйте `tool_profile:"compact"`, запрашивайте controls только
 для semantic targeting и используйте `result_mode:"auto"` с явным native expect.

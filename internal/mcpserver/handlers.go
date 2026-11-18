@@ -91,6 +91,7 @@ func (s *Service) capture(ctx context.Context, r platform.Rect, monitor, format 
 	return out, nil
 }
 func (s *Service) action(ctx context.Context, a platform.Action) (*mcp.CallToolResult, error) {
+	s.discovery.invalidate() // Includes internal workflow input and failed attempts.
 	started := time.Now()
 	defer s.performance.record("action", started)
 	if s.Desktop.Name() == "macos-quartz" {

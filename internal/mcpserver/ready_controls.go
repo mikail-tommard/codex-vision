@@ -166,48 +166,35 @@ func (g *readyGuard) observe(ctx context.Context) (bool, error) {
 }
 
 type ControlsArgs struct {
-	WindowID string `json:"window_id"`
-	MaxNodes int    `json:"max_nodes,omitempty"`
-	Compact  *bool  `json:"compact,omitempty" jsonschema:"Default true omits bounds; labels, roles and enabled state remain"`
+	SinceRevision string `json:"since_revision,omitempty" jsonschema:"Previous revision: unchanged controls are omitted. Always check changed; revisions never authorize input"`
+	MaxAgeMS      int    `json:"max_age_ms,omitempty" jsonschema:"Discovery only: reuse data up to 0..2000ms old; default 0 reads fresh. Cached data never proves readiness or authorizes input"`
+	WindowID      string `json:"window_id"`
+	MaxNodes      int    `json:"max_nodes,omitempty"`
+	Compact       *bool  `json:"compact,omitempty" jsonschema:"Default true omits bounds; labels, roles and enabled state remain"`
 }
 
 func (v *Service) registerControls(s *mcp.Server) {
-	bind(s, v, "ui_controls", "Read bounded native AX control labels/roles/enabled states in one confirmed window, without images or field values. Use exact labels to configure desktop_batch ready_when. Missing/ambiguous/truncated/unknown-enabled controls do not prove readiness. Does not replace fillable field snapshots.", true, func(ctx context.Context, a ControlsArgs) (*mcp.CallToolResult, error) {
+	if _, supported := v.Desktop.(platform.ControlReader); !supported && v.Config.ToolProfile == "compact" {
+		return
+	}
+	bind(s, v, "ui_controls", "Discover native controls without images or values. since_revision suppresses duplicate controls; max_age_ms opts into a short discovery cache. Always inspect changed/cached/age_ms. Input and readiness use fresh native reads. Does not replace fillable snapshots.", true, func(ctx context.Context, a ControlsArgs) (*mcp.CallToolResult, error) {
 		if a.MaxNodes == 0 {
 			a.MaxNodes = 1000
 		}
 		if a.MaxNodes < 1 || a.MaxNodes > 2000 {
 			return nil, fmt.Errorf("max_nodes must be 1..2000")
 		}
+		if a.MaxAgeMS < 0 || a.MaxAgeMS > 2000 || len(a.SinceRevision) > 64 {
+			return nil, fmt.Errorf("max_age_ms must be 0..2000 and since_revision at most 64 bytes")
+		}
+		if err := v.Session.ObservationError(); err != nil {
+			return nil, err
+		}
 		w, e := v.attentionWindow(ctx, a.WindowID)
 		if e != nil {
+			v.discovery.invalidate()
 			return nil, e
 		}
-		// bind's read lane is already held; release/reacquire is unnecessary here.
-		reader, ok := v.Desktop.(platform.ControlReader)
-		if !ok {
-			return nil, errControlsUnavailable
-		}
-		raw, e := reader.ReadControls(ctx, w, a.MaxNodes)
-		if e != nil {
-			return nil, e
-		}
-		after, e := v.attentionWindow(ctx, w.ID)
-		if e != nil {
-			return nil, e
-		}
-		if after.Process != w.Process || after.Bounds != w.Bounds {
-			return nil, fmt.Errorf("window changed during control read")
-		}
-		compact := a.Compact == nil || *a.Compact
-		controls := make([]map[string]any, 0, len(raw.Controls))
-		for _, control := range raw.Controls {
-			item := map[string]any{"label": control.Label, "role": control.Role, "enabled": control.Enabled}
-			if !compact {
-				item["bounds"] = control.Bounds
-			}
-			controls = append(controls, item)
-		}
-		return result(map[string]any{"window_id": w.ID, "controls": controls, "truncated": raw.Truncated, "visited": raw.Visited, "content_trust": "untrusted UI metadata"}), nil
+		return v.discoverControls(ctx, w, a)
 	})
 }
