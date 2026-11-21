@@ -1,15 +1,24 @@
 # MCP-инструменты
 
-С версии 0.12.0 по умолчанию включён `tool_profile:"compact"`: 12 инструментов — `desktop_observe`, `desktop_act`, `window_list`, `window_focus`, `window_get_active`, `app_launch`, `observation_control`, `session_status`, `session_stop`, `ui_fill_batch`, `macos_permission_diagnostics`, `screen_region`. В JSON-конфигурации `tool_profile:"full"` или при запуске `--tool-profile full` доступны прежние 29 инструментов, перечисленные ниже. CLI имеет приоритет. Старые конфигурации без поля используют compact; для прежних сценариев с отдельными keyboard/mouse/observation_start вызовами выберите full. Профиль не меняет разрешения ввода. Поддержка операций зависит от backend. Неизвестные поля аргументов отвергаются.
+## Профили каталога
 
-В compact метаданные передаются только JSON-текстом в `content`, изображения — отдельными image-блоками. Дублирующая копия `structuredContent` не передаётся. Full сохраняет оба представления для совместимости. Значения `session_status.server.version` и `tool_profile` показывают работающую версию и каталог.
+Профиль задаётся параметром `tool_profile` в JSON-конфигурации. Флаг `--tool-profile` имеет приоритет. `compact` используется по умолчанию, в том числе в конфигурациях без этого поля.
+
+| Профиль | Каталог |
+| --- | --- |
+| `compact` | Вне Wayland включает `desktop_observe`, `desktop_act`, `window_list`, `window_focus`, `window_get_active`, `app_launch`, `observation_control`, `session_status`, `session_stop`, `ui_fill_batch`, `macos_permission_diagnostics` и `screen_region` (12 инструментов). Если backend поддерживает чтение нативных контролов, добавляется `ui_controls` (13 инструментов). |
+| `full` | 29 базовых инструментов, включая отдельные действия мыши и клавиатуры, `screen_capture`, `observation_start` и `observation_next`. |
+
+Некоторые инструменты требуют отдельного включения. У Wayland свой [компактный каталог](#wayland). Фактический список возвращает MCP-метод `tools/list`. `session_status.server` сообщает версию и выбранный профиль, а `session_status.capabilities` описывает возможности backend. Для ввода действуют локальная политика и разрешения ОС. Неизвестные поля аргументов отвергаются.
+
+В `compact` метаданные передаются JSON-текстом в `content`. `full` сохраняет текст и копию в `structuredContent` для совместимости. Изображения в обоих профилях передаются отдельными блоками.
 
 ## Единый цикл
 
 | Инструмент | Назначение |
 | --- | --- |
 | `desktop_observe` | Окно, максимум один свежий кадр, контролы и необязательные поля в одном ответе; краткоживущий view |
-| `desktop_act` | Действия из view, свежая проверка target_id, преобразование image-координат, локальная проверка результата и следующий view |
+| `desktop_act` | Действия из view, свежая проверка target_id, преобразование image-координат, локальная проверка результата и следующий view. Для правого клика укажите `"action":"click","button":"right"` в шаге. |
 
 Протокол и ограничения: [agent-loop.md](agent-loop.md). Доступные ниже отдельные инструменты сохранены для совместимости и точечных операций.
 
@@ -20,7 +29,7 @@
 | `session_status` | Версия/PID, разрешения, бюджет и stop; `include_recent:true` добавляет последние 12 вызовов с категориями ошибок и локальными временами, без UI-содержимого |
 | `session_stop` | Аварийно отменить операцию и заблокировать ввод до локального перезапуска. Для обычного завершения наблюдения использовать `observation_control action=stop` |
 | `screen_list_monitors` | Мониторы, границы и система координат backend |
-| `screen_capture` | Полный desktop или монитор; `monitor_id`, `format`, `quality`, `max_width` |
+| `screen_capture` | Полный рабочий стол или монитор; `monitor_id`, `format`, `quality`, `max_width`. Для Wayland действует [портальный контракт](#wayland). |
 | `screen_region` | Фрагмент по `x`, `y`, `width`, `height` в координатах desktop |
 | `macos_permission_diagnostics` | macOS: свежие сведения о разрешениях, GUI-сессии и цепочке процессов |
 
@@ -40,7 +49,7 @@
 | Инструмент | Основные аргументы |
 | --- | --- |
 | `mouse_move` | `x`, `y`, необязательный `window_id` |
-| `mouse_click` | `x`, `y`, `button`, `count`, `window_id` |
+| `mouse_click` | `x`, `y`, `button` (`left` по умолчанию, `right`, `middle`), `count`, `window_id` |
 | `mouse_drag` | `x`, `y`, `end_x`, `end_y`, `duration_ms`, `window_id` |
 | `mouse_scroll` | `delta`, `horizontal`, `window_id`; macOS/Linux требуют кратность 120 |
 | `keyboard_type` | `text`, `window_id`; Unicode-ввод без автоматического Enter |
@@ -68,7 +77,9 @@ y = source_bounds.y + floor(v * source_bounds.height / image_height)
 | `ui_fill` | Заменить значение одного поля по `snapshot_id` и `element_id` либо уникальной `label` |
 | `ui_fill_batch` | Заполнить до 20 полей из одного снимка; остановиться при первой ошибке |
 | `ui_wait` | Ограниченное локальное ожидание окна или состояния поля без изображений |
-| `ui_controls` | Подписи, роли и enabled-состояния доступных контролов для настройки готовности |
+| `ui_controls` | Подписи, роли и состояния доступности контролов по `window_id`, без изображений и значений полей |
+
+`ui_controls` возвращает `revision`. Передайте её в `since_revision` при следующем вызове. Если ревизия совпадает, сервер вернёт `changed:false` и опустит массив `controls`. По умолчанию дерево читается заново. `max_age_ms` до 2000 мс разрешает использовать кэш для просмотра, а готовность и цели ввода проверяются по свежим данным. [Ревизии и кэш](economy-0143.md#discovery-без-изображений)
 
 Существующие значения полей не выдаются в `ui_snapshot`, secure-поля не заполняются. Снимок полей действует до 60 секунд и до замены; после stale-ошибки нужен новый. `truncated:true` означает неполный обход, а не отсутствие остальных полей. Сайты и Qt-приложения могут не предоставлять нужных Accessibility-данных.
 
@@ -84,6 +95,26 @@ y = source_bounds.y + floor(v * source_bounds.height / image_height)
 | `mouse_action_wait` | Один drag или click pair и локальное ожидание результата |
 | `desktop_batch` | До 12 предсказуемых действий и одно локальное ожидание; максимум один итоговый кадр |
 
-В пакете доступны шаги `click`, `move`, `scroll`, `press`, `hotkey`, `type`. Если следующий шаг зависит от ещё не увиденной страницы, разделите его на отдельный пакет. При частичной ошибке проверяйте `completed_steps` и `interaction.may_have_changed`: повтор пакета может продублировать ввод.
+В пакете доступны шаги `click`, `move`, `scroll`, `press`, `hotkey`, `type`. Шаг `click` принимает `button` (`left` по умолчанию, `right`, `middle`), в том числе в `desktop_act` и `workflow_control`. Если следующий шаг зависит от ещё не увиденной страницы, разделите его на отдельный пакет. При частичной ошибке проверяйте `completed_steps` и `interaction.may_have_changed`: повтор пакета может продублировать ввод.
 
 Режимы ожидания, текстовые ответы и диагностика описаны в [observation.md](observation.md).
+
+## Дополнительные инструменты
+
+| Инструмент | Условие регистрации | Назначение |
+| --- | --- | --- |
+| `workflow_control` | `workflows:true` | Запуск, статус, отмена и ограниченное возобновление сценария с проверяемыми UI-условиями через `start`, `status`, `cancel`, `resume`. |
+| `ui_memory_control` | Задан `ui_memory_directory` | `status` показывает состояние локальной памяти, `clear` очищает записи текущего пространства имён и рецепты в памяти процесса. |
+
+Подробности формата и ограничения описаны в [autonomy.md](autonomy.md).
+
+## Wayland
+
+В локальной Wayland-сессии `CODEX_VISION_WAYLAND_PORTAL=1` включает портальный backend. Его каталог `compact` содержит `screen_capture`, `session_status` и `session_stop`. Дополнительный флаг `CODEX_VISION_WAYLAND_STREAM=1` добавляет `screencast_control` при запуске потокового backend. Оба флага задаются в окружении MCP-процесса. [Настройка Wayland](platforms.md#wayland)
+
+| Инструмент | Назначение |
+| --- | --- |
+| `screen_capture` | Один снимок с системным запросом согласия. По умолчанию JPEG, качество 75, ширина до 768 пикселей. Доступны `format`, `quality` и `max_width`. `monitor_id` отклоняется, источник выбирается через портал. |
+| `screencast_control` | Экспериментальный поток одного источника через ScreenCast portal v6+ и GStreamer/PipeWire. `start` требует `duration_sec` и `max_frames`. `next` с `after_sequence` запрашивает изменившийся кадр, `status` показывает состояние, `stop` завершает поток. |
+
+Координаты кадра относятся к самому изображению. Геометрия рабочего стола, список окон, обычное наблюдение за рабочим столом и ввод на Wayland недоступны при любом профиле. Для обычного завершения потока используйте `screencast_control action=stop`. `session_stop` аварийно останавливает портальный захват до локального перезапуска. [API ScreenCast](wayland-screencast.md)

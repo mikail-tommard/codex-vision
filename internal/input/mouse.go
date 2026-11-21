@@ -42,12 +42,21 @@ func Validate(a platform.Action, b platform.Rect) error {
 		return fmt.Errorf("unsupported action")
 	}
 	if a.Tool == "mouse_click" || a.Tool == "mouse_drag" {
-		if a.Button != "left" && a.Button != "right" && a.Button != "middle" {
-			return fmt.Errorf("button must be left, right or middle")
+		if err := ValidateMouseButton(a.Button); err != nil {
+			return err
 		}
 		if a.Tool == "mouse_click" && (a.Count < 1 || a.Count > 2) {
 			return fmt.Errorf("count must be 1 or 2")
 		}
 	}
 	return nil
+}
+
+func ValidateMouseButton(button string) error {
+	switch button {
+	case "left", "right", "middle":
+		return nil
+	default:
+		return fmt.Errorf("button must be left, right or middle")
+	}
 }

@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"cmp"
 	"context"
 	"example.com/codex-vision/internal/input"
 	"example.com/codex-vision/internal/observation"
@@ -19,6 +20,7 @@ type DesktopStep struct {
 	DelayBeforeMS     int              `json:"delay_before_ms,omitempty" jsonschema:"Local pause before this predictable step, 0..1000ms; batch total at most 2000ms. Rechecks focus after waiting. Not a readiness or success check"`
 	TargetID          string           `json:"target_id,omitempty" jsonschema:"desktop_act only: short-lived control ID from desktop_observe; do not combine with x/y"`
 	Action            string           `json:"action" jsonschema:"click, move, scroll, press, hotkey or type; workflow also supports wait. Do not guess targets after navigation"`
+	Button            string           `json:"button,omitempty" jsonschema:"Click only: left (default), right or middle"`
 	X                 int              `json:"x,omitempty"`
 	Y                 int              `json:"y,omitempty"`
 	Delta             int              `json:"delta,omitempty" jsonschema:"scroll: nonzero multiple of 120, -1200..1200; negative scrolls down"`
@@ -70,7 +72,7 @@ func (v *Service) prepareBatchOptions(a *DesktopBatchArgs) error {
 	if len(a.Steps) < 1 || len(a.Steps) > 12 {
 		return fmt.Errorf("steps must contain 1..12 actions")
 	}
-	if err := validateStepTargets(a.Steps); err != nil {
+	if err := validateDesktopSteps(a.Steps); err != nil {
 		return err
 	}
 	delayMS := 0
@@ -152,7 +154,7 @@ func (v *Service) runDesktopBatch(ctx context.Context, a DesktopBatchArgs, befor
 		switch step.Action {
 		case "click":
 			act.Tool = "mouse_click"
-			act.Button = "left"
+			act.Button = cmp.Or(step.Button, "left")
 			act.Count = 1
 		case "move":
 			act.Tool = "mouse_move"

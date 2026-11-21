@@ -104,6 +104,21 @@ func TestCompactVisualActionsSkipControlsAndKeepNextView(t *testing.T) {
 	}
 }
 
+func TestCompactDesktopActRightClick(t *testing.T) {
+	d := agentFixture("Saved")
+	cfg := uiConfig()
+	cfg.Allow = []string{"mouse_click"}
+	c, _ := connectProfileDesktop(t, cfg, d, "compact")
+	view := agentResult(t, call(t, c, "desktop_observe", map[string]any{"include_controls": true}, true))
+	args := agentClick(view.View.ID, view.Controls[0].ID, "Saved 1")
+	args["steps"].([]map[string]any)[0]["button"] = "right"
+	result := agentResult(t, call(t, c, "desktop_act", args, true))
+	actions := d.actions()
+	if !result.Verification.Matched || len(actions) != 1 || actions[0].Tool != "mouse_click" || actions[0].Button != "right" || actions[0].Count != 1 {
+		t.Fatalf("expected one verified right click, got actions %v and result %+v", actions, result)
+	}
+}
+
 func TestFullCanDisableControlDiscovery(t *testing.T) {
 	d := &countedControlsDesktop{agentDesktop: agentFixture("Ready")}
 	c, _ := connectProfileDesktop(t, config.Default(), d, "full")

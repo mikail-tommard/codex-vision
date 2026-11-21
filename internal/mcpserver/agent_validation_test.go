@@ -22,6 +22,8 @@ func TestInvalidActPreservesViewForCorrectedRequest(t *testing.T) {
 		{"result_mode", map[string]any{"result_mode": "unknown"}},
 		{"motion", map[string]any{"motion": "unknown"}},
 		{"invalid_key", map[string]any{"steps": []map[string]any{{"action": "press", "key": "NO_KEY"}}}},
+		{"invalid_button", map[string]any{"steps": []map[string]any{{"action": "click", "button": "unknown", "x": 50, "y": 50}}}},
+		{"button_on_move", map[string]any{"steps": []map[string]any{{"action": "move", "button": "right", "x": 50, "y": 50}}}},
 		{"invalid_expectation", map[string]any{"expect": map[string]any{"title_contains": "Saved", "control_label": "Execute"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -43,7 +45,7 @@ func TestInvalidActPreservesViewForCorrectedRequest(t *testing.T) {
 				t.Fatal("validation consumed view or posted input", retained, d.actions())
 			}
 			out := agentResult(t, call(t, c, "desktop_act", agentClick(v.View.ID, v.Controls[0].ID, "Saved 1"), true))
-			if !out.Verification.Matched || len(d.actions()) != 1 {
+			if actions := d.actions(); !out.Verification.Matched || len(actions) != 1 || actions[0].Button != "left" {
 				t.Fatal("corrected request could not use same view", out)
 			}
 		})

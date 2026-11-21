@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -79,7 +80,7 @@ func workflowAction(step DesktopStep, windowID string) (platform.Action, error) 
 	if step.TargetID != "" || step.X != 0 || step.Y != 0 || step.DelayBeforeMS != 0 {
 		return a, fmt.Errorf("workflow uses fresh semantic targets; coordinates, target_id and fixed delays are unsupported")
 	}
-	if err := validateStepTargets([]DesktopStep{step}); err != nil {
+	if err := validateDesktopSteps([]DesktopStep{step}); err != nil {
 		return a, err
 	}
 	switch step.Action {
@@ -93,7 +94,9 @@ func workflowAction(step DesktopStep, windowID string) (platform.Action, error) 
 			return a, fmt.Errorf("workflow click/move requires target label and optional role")
 		}
 		a.Tool = "mouse_" + step.Action
-		a.Button, a.Count = "left", 1
+		if step.Action == "click" {
+			a.Button, a.Count = cmp.Or(step.Button, "left"), 1
+		}
 	case "press":
 		a.Tool, a.Keys = "keyboard_press", []string{step.Key}
 	case "hotkey":

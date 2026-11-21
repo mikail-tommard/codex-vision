@@ -26,7 +26,7 @@ func TestDesktopBatchSingleImageAndPartialFailure(t *testing.T) {
 			if err := json.Unmarshal([]byte(started.Content[0].(*mcp.TextContent).Text), &start); err != nil {
 				t.Fatal(err)
 			}
-			steps := []map[string]any{{"action": "click", "x": 40, "y": 40}, {"action": "scroll", "delta": -120}}
+			steps := []map[string]any{{"action": "click", "button": "right", "x": 40, "y": 40}, {"action": "scroll", "delta": -120}}
 			if mode == "timeout" {
 				d.phase.Store(80)
 			} // Final pixels are already in the pre-action baseline.
@@ -56,6 +56,9 @@ func TestDesktopBatchSingleImageAndPartialFailure(t *testing.T) {
 			case "success":
 				if out.Completed != 2 || out.Frame == nil || len(r.Content) != 2 || out.Interaction.Stage != "stable_change" {
 					t.Fatal(out)
+				}
+				if actions := d.actions(); len(actions) != 2 || actions[0].Button != "right" {
+					t.Fatal("batch did not post a right click", actions)
 				}
 			case "timeout":
 				if out.Completed != 2 || out.Frame != nil || len(r.Content) != 1 || !out.Interaction.TimedOut {

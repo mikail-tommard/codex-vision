@@ -68,7 +68,7 @@ type DesktopActArgs struct {
 
 func (v *Service) registerAgent(s *mcp.Server) {
 	bind(s, v, "desktop_observe", "Confirm active window; return one fresh scoped image and view_id. Optional include_controls/fields provide UI references. Starts observation if needed (task default, continuous by explicit request); preserves existing stream. Unchanged state omits image. UI metadata is non-atomic, not input authorization.", true, v.desktopObserve)
-	bind(s, v, "desktop_act", "Act once from a fresh desktop_observe view. Resolve target_id by a unique fresh structural control match, or convert explicit image coordinates. Pin window/process/geometry and consume the view before the batch; at most one authorized preflight focus. Use expect for a native UI postcondition, result_mode=image for visual decisions, then inspect the returned result. No action replay or automatic recovery after partial input.", false, v.desktopAct)
+	bind(s, v, "desktop_act", "Act once from a fresh desktop_observe view. For a right click use a click step with button=right. Resolve target_id by a unique fresh structural control match, or convert explicit image coordinates. Pin window/process/geometry and consume the view before the batch; at most one authorized preflight focus. Use expect for a native UI postcondition, result_mode=image for visual decisions, then inspect the returned result. No action replay or automatic recovery after partial input.", false, v.desktopAct)
 }
 
 func sameAgentWindow(a, b platform.Window) bool {

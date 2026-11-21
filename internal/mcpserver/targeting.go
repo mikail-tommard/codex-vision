@@ -6,6 +6,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"example.com/codex-vision/internal/input"
 	"example.com/codex-vision/internal/platform"
 )
 
@@ -71,8 +72,16 @@ func sameControl(a, b platform.UIControl) bool {
 	return platform.MatchControl(a, b)
 }
 
-func validateStepTargets(steps []DesktopStep) error {
+func validateDesktopSteps(steps []DesktopStep) error {
 	for i, s := range steps {
+		if s.Button != "" {
+			if s.Action != "click" {
+				return fmt.Errorf("step %d: button requires click", i+1)
+			}
+			if err := input.ValidateMouseButton(s.Button); err != nil {
+				return fmt.Errorf("step %d: %w", i+1, err)
+			}
+		}
 		if s.Target == nil && s.TargetID == "" {
 			continue
 		}

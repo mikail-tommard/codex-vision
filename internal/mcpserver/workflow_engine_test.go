@@ -36,10 +36,13 @@ func TestWorkflowNativeCheckpointsWithoutScreenshots(t *testing.T) {
 	cfg.Workflows = true
 	cfg.Allow = []string{"mouse_click", "keyboard_press"}
 	c, svc := connectDesktop(t, cfg, d)
-	call(t, c, "workflow_control", map[string]any{"action": "start", "window_id": "mock-window", "steps": workflowPlan(), "max_actions": 2, "timeout_ms": 5000}, true)
+	plan := workflowPlan()
+	plan[0].Step.Button = "right"
+	call(t, c, "workflow_control", map[string]any{"action": "start", "window_id": "mock-window", "steps": plan, "max_actions": 2, "timeout_ms": 5000}, true)
 	r := waitWorkflow(t, svc)
-	if r.State != "success" || r.Checkpoint != 2 || len(r.Journal) != 2 || len(d.actions()) != 2 || svc.Observer.Status().LocalFrames != 0 {
-		t.Fatal(r, d.actions())
+	actions := d.actions()
+	if r.State != "success" || r.Checkpoint != 2 || len(r.Journal) != 2 || len(actions) != 2 || actions[0].Button != "right" || svc.Observer.Status().LocalFrames != 0 {
+		t.Fatal(r, actions)
 	}
 	encoded, _ := json.Marshal(r)
 	if strings.Contains(string(encoded), "Execute") || strings.Contains(string(encoded), "Saved") {
