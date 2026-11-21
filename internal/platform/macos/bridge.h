@@ -2,7 +2,8 @@
 #include <stdint.h>
 char *cv_monitors(void);
 char *cv_windows(int active);
-int cv_capture(uint32_t display, int timeout_ms, void **bytes, size_t *length, char **error);
+typedef struct { int x, y, width, height; } cv_capture_rect;
+int cv_capture(uint32_t display, cv_capture_rect expected, cv_capture_rect region, int timeout_ms, void **bytes, size_t *length, char **error);
 int cv_event(int kind, double x, double y, int delta, int horizontal, uint32_t window, int pid, char **error);
 int cv_focus(uint32_t window, char **error);
 

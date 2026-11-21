@@ -3,48 +3,38 @@ package observation
 import (
 	"bytes"
 	"context"
-	"example.com/codex-vision/internal/platform"
-	"example.com/codex-vision/internal/vision"
 	"image"
-	"image/draw"
 	_ "image/jpeg"
 	"time"
+
+	"example.com/codex-vision/internal/platform"
+	"example.com/codex-vision/internal/vision"
 )
 
-func cropFrame(ctx context.Context, source *Frame, im image.Image, r image.Rectangle, quality int, kind string, base uint64) (*Frame, error) {
-	b := im.Bounds()
-	r = r.Intersect(b)
-	crop := image.NewRGBA(image.Rect(0, 0, r.Dx(), r.Dy()))
-	draw.Draw(crop, crop.Bounds(), im, r.Min, draw.Src)
-	data, mime, w, h, err := vision.Encode(ctx, crop, "jpeg", quality, 0)
-	if err != nil {
-		return nil, err
-	}
-	full := *source
-	bounds := source.Bounds
-	x0 := (r.Min.X - b.Min.X) * bounds.Width / b.Dx()
-	y0 := (r.Min.Y - b.Min.Y) * bounds.Height / b.Dy()
-	x1 := (r.Max.X - b.Min.X) * bounds.Width / b.Dx()
-	y1 := (r.Max.Y - b.Min.Y) * bounds.Height / b.Dy()
-	full.Data = data
-	full.MIME = mime
-	full.Width = w
-	full.Height = h
-	full.Bounds = platform.Rect{X: bounds.X + x0, Y: bounds.Y + y0, Width: x1 - x0, Height: y1 - y0}
-	full.Kind = kind
-	full.BaseSequence = base
-	return &full, nil
+// A delivery owns its metadata and shares only the immutable capture bytes.
+type frameDelivery struct {
+	frame             Frame
+	selected          image.Rectangle // relative to the capture origin, in desktop units
+	quality, maxWidth int
 }
-func (m *Manager) regionFrame(ctx context.Context, after uint64) (*Frame, error) {
-	full := *m.latest
-	full.Diagnostics = copyDiagnostic(full.Diagnostics)
-	full.Kind = "full"
-	scope := full.Bounds
-	if m.opts.WatchRegion != nil {
-		scope = *m.opts.WatchRegion
+
+func focusedDelivery(frame *Frame, o Options) frameDelivery {
+	full := *frame
+	full.Diagnostics = copyDiagnostic(frame.Diagnostics)
+	scope := frame.Bounds
+	if o.WatchRegion != nil {
+		scope = *o.WatchRegion
 	}
 	full.FullBounds = scope
-	selected := image.Rect(scope.X-full.Bounds.X, scope.Y-full.Bounds.Y, scope.X-full.Bounds.X+scope.Width, scope.Y-full.Bounds.Y+scope.Height)
+	x, y := scope.X-full.Bounds.X, scope.Y-full.Bounds.Y
+	return frameDelivery{full, image.Rect(x, y, x+scope.Width, y+scope.Height), o.Quality, o.ModelMaxWidth}
+}
+
+// Caller holds the manager lock while selecting the delta and its base.
+func (m *Manager) regionDelivery(after uint64) frameDelivery {
+	plan := focusedDelivery(m.latest, m.opts)
+	full := &plan.frame
+	selected := plan.selected
 	base := uint64(0)
 	kind := "full"
 	imageReason := "no_accumulated_delta"
@@ -77,45 +67,48 @@ func (m *Manager) regionFrame(ctx context.Context, after uint64) (*Frame, error)
 			full.Diagnostics.Coalesced = full.Sequence - m.deliveredSequence - 1
 		}
 	}
-	if selected == image.Rect(0, 0, full.Bounds.Width, full.Bounds.Height) {
-		return m.modelFrame(ctx, &full)
-	}
-	im, _, err := image.Decode(bytes.NewReader(full.Data))
-	if err != nil {
-		return nil, err
-	}
-	b := im.Bounds()
-	r := image.Rect(selected.Min.X*b.Dx()/full.Bounds.Width, selected.Min.Y*b.Dy()/full.Bounds.Height, (selected.Max.X*b.Dx()+full.Bounds.Width-1)/full.Bounds.Width, (selected.Max.Y*b.Dy()+full.Bounds.Height-1)/full.Bounds.Height)
-	cropped, err := cropFrame(ctx, &full, im, r, m.opts.Quality, kind, base)
-	if err != nil {
-		return nil, err
-	}
-	return m.modelFrame(ctx, cropped)
-}
-func nextInterval(base, current, ceiling time.Duration, unchanged int) time.Duration {
-	if unchanged < 3 {
-		return base
-	}
-	return min(ceiling, current*2)
+	plan.selected = selected
+	full.BaseSequence = base
+	full.Kind = kind
+	return plan
 }
 
-// Keep the preview JPEG intact. Resize only images explicitly delivered to a model.
-func (m *Manager) modelFrame(ctx context.Context, f *Frame) (*Frame, error) {
-	if m.opts.ModelMaxWidth == 0 || f.Width <= m.opts.ModelMaxWidth {
-		return f, nil
+// Decode once, then encode directly from the selected pixels at delivery size.
+func (p frameDelivery) render(ctx context.Context) (*Frame, error) {
+	f := p.frame
+	bounds := f.Bounds
+	crop := p.selected != image.Rect(0, 0, bounds.Width, bounds.Height)
+	if !crop && (p.maxWidth == 0 || f.Width <= p.maxWidth) {
+		return &f, ctx.Err()
 	}
 	im, _, err := image.Decode(bytes.NewReader(f.Data))
 	if err != nil {
 		return nil, err
 	}
-	data, mime, w, h, err := vision.Encode(ctx, im, "jpeg", m.opts.Quality, m.opts.ModelMaxWidth)
+	if crop {
+		b := im.Bounds()
+		// Round outward so a scaled capture still covers every requested edge.
+		r := image.Rect(
+			p.selected.Min.X*b.Dx()/bounds.Width,
+			p.selected.Min.Y*b.Dy()/bounds.Height,
+			(p.selected.Max.X*b.Dx()+bounds.Width-1)/bounds.Width,
+			(p.selected.Max.Y*b.Dy()+bounds.Height-1)/bounds.Height,
+		).Add(b.Min).Intersect(b)
+		im = cropImage(im, r)
+		x0, y0 := (r.Min.X-b.Min.X)*bounds.Width/b.Dx(), (r.Min.Y-b.Min.Y)*bounds.Height/b.Dy()
+		x1, y1 := (r.Max.X-b.Min.X)*bounds.Width/b.Dx(), (r.Max.Y-b.Min.Y)*bounds.Height/b.Dy()
+		f.Bounds = platform.Rect{X: bounds.X + x0, Y: bounds.Y + y0, Width: x1 - x0, Height: y1 - y0}
+	}
+	f.Data, f.MIME, f.Width, f.Height, err = vision.Encode(ctx, im, "jpeg", p.quality, p.maxWidth)
 	if err != nil {
 		return nil, err
 	}
-	copyFrame := *f
-	copyFrame.Data = data
-	copyFrame.MIME = mime
-	copyFrame.Width = w
-	copyFrame.Height = h
-	return &copyFrame, nil
+	return &f, nil
+}
+
+func nextInterval(base, current, ceiling time.Duration, unchanged int) time.Duration {
+	if unchanged < 3 {
+		return base
+	}
+	return min(ceiling, current*2)
 }

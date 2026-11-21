@@ -431,3 +431,47 @@ func TestWrongVisualClickDoesNotSatisfyUIExpectation(t *testing.T) {
 		t.Fatal(out)
 	}
 }
+
+func TestViewControlsRevision(t *testing.T) {
+	d := agentFixture("Saved")
+	c, _ := agentClient(t, d)
+	observe := func(rev string) map[string]any {
+		r := call(t, c, "desktop_observe", map[string]any{"include_controls": true, "since_controls_revision": rev}, true)
+		return r.StructuredContent.(map[string]any)
+	}
+	first := observe("")
+	rev := first["controls_revision"].(string)
+	id := first["controls"].([]any)[0].(map[string]any)["target_id"].(string)
+	next := observe(rev)
+	if next["controls_changed"] != false || next["controls"] != nil || next["controls_revision"] != rev {
+		t.Fatal(next)
+	}
+	viewID := next["view"].(map[string]any)["view_id"].(string)
+	args := agentClick(viewID, id, "Saved 1")
+	args["since_controls_revision"] = rev
+	result := call(t, c, "desktop_act", args, true).StructuredContent.(map[string]any)
+	if result["controls_changed"] != true || result["controls_revision"] == rev {
+		t.Fatal("title change needs fresh references", result)
+	}
+	revision := result["controls_revision"]
+	afterMove := call(t, c, "desktop_act", map[string]any{
+		"view_id":                 result["view"].(map[string]any)["view_id"],
+		"steps":                   []DesktopStep{{Action: "move", X: 50, Y: 50}},
+		"expect":                  ExpectedState{TitleContains: "Saved 1", RequireTransition: ptr(false)},
+		"since_controls_revision": revision, "settle_ms": 100, "wait_ms": 2000,
+	}, true).StructuredContent.(map[string]any)
+	if afterMove["view"] == nil || afterMove["controls_changed"] != false || afterMove["controls"] != nil || afterMove["controls_revision"] != revision {
+		t.Fatal("unchanged controls repeated after move", afterMove)
+	}
+}
+
+func TestDesktopObserveStartsWithCaptureRegion(t *testing.T) {
+	c, svc := agentClient(t, agentFixture("Saved"))
+	region := platform.Rect{X: 20, Y: 30, Width: 200, Height: 100}
+	out := agentResult(t, call(t, c, "desktop_observe", map[string]any{"capture_region": region}, true))
+	if svc.Observer.Status().CaptureBounds != region || out.Frame == nil || out.Frame.Bounds != region {
+		t.Fatal(out, svc.Observer.Status())
+	}
+	region.X++
+	call(t, c, "desktop_observe", map[string]any{"capture_region": region}, false)
+}

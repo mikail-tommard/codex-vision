@@ -126,6 +126,7 @@ type Status struct {
 	Backend           string            `json:"backend"`
 	PreviewURL        string            `json:"preview_url,omitempty"`
 	Sequence          uint64            `json:"sequence"`
+	EncodedFrames     uint64            `json:"encoded_frames"`
 	LocalFrames       uint64            `json:"local_frames"`
 	SignificantFrames uint64            `json:"significant_frames"`
 	ImagesReturned    uint64            `json:"images_returned"`
@@ -155,6 +156,7 @@ type Manager struct {
 	baselineBounds             platform.Rect
 	latest, preview            *Frame
 	previewSequence            uint64
+	delivering                 bool
 	deliveredSequence          uint64
 	lastDelivery, lastActivity time.Time
 	server                     *http.Server
@@ -185,30 +187,30 @@ func (m *Manager) Touch() {
 	default:
 	}
 }
-func (m *Manager) prepare(ctx context.Context, s Sample, o Options) (*Frame, fingerprint, error) {
+func sampleSignature(ctx context.Context, s Sample, o Options) (fingerprint, error) {
 	if s.Image == nil || !s.Bounds.Valid() {
-		return nil, fingerprint{}, fmt.Errorf("invalid observation sample")
+		return fingerprint{}, fmt.Errorf("invalid observation sample")
 	}
 	if s.Image.Bounds().Dx() != s.Bounds.Width || s.Image.Bounds().Dy() != s.Bounds.Height {
-		return nil, fingerprint{}, fmt.Errorf("sample and desktop coordinate bounds differ")
+		return fingerprint{}, fmt.Errorf("sample and desktop coordinate bounds differ")
 	}
 	if err := vision.Validate(s.Image.Bounds()); err != nil {
-		return nil, fingerprint{}, err
+		return fingerprint{}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, fingerprint{}, err
+		return fingerprint{}, err
 	}
 	masks := make([]image.Rectangle, 0, len(o.IgnoreRegions))
 	for _, r := range o.IgnoreRegions {
 		if !s.Bounds.Includes(r) {
-			return nil, fingerprint{}, fmt.Errorf("ignore region outside capture bounds")
+			return fingerprint{}, fmt.Errorf("ignore region outside capture bounds")
 		}
 		masks = append(masks, image.Rect(s.Image.Bounds().Min.X+r.X-s.Bounds.X, s.Image.Bounds().Min.Y+r.Y-s.Bounds.Y, s.Image.Bounds().Min.X+r.X-s.Bounds.X+r.Width, s.Image.Bounds().Min.Y+r.Y-s.Bounds.Y+r.Height))
 	}
 	if o.WatchRegion != nil {
 		w := *o.WatchRegion
 		if !s.Bounds.Includes(w) {
-			return nil, fingerprint{}, fmt.Errorf("watch_region outside capture bounds")
+			return fingerprint{}, fmt.Errorf("watch_region outside capture bounds")
 		}
 		b := s.Image.Bounds()
 		x := b.Min.X + w.X - s.Bounds.X
@@ -216,12 +218,23 @@ func (m *Manager) prepare(ctx context.Context, s Sample, o Options) (*Frame, fin
 		masks = append(masks, image.Rect(b.Min.X, b.Min.Y, b.Max.X, y), image.Rect(b.Min.X, y+w.Height, b.Max.X, b.Max.Y), image.Rect(b.Min.X, y, x, y+w.Height), image.Rect(x+w.Width, y, b.Max.X, y+w.Height))
 	}
 	if o.ReadyRegion != nil && !s.Bounds.Includes(*o.ReadyRegion) {
-		return nil, fingerprint{}, fmt.Errorf("ready_region outside capture bounds")
+		return fingerprint{}, fmt.Errorf("ready_region outside capture bounds")
 	}
 	sig := signature(s.Image, masks...)
 	if o.WatchRegion != nil && sig.active == 0 {
-		return nil, fingerprint{}, fmt.Errorf("watch_region has no sampled pixels; enlarge it or remove overlapping ignore regions")
+		return fingerprint{}, fmt.Errorf("watch_region has no sampled pixels; enlarge it or remove overlapping ignore regions")
 	}
+	return sig, nil
+}
+func (m *Manager) prepare(ctx context.Context, s Sample, o Options) (*Frame, fingerprint, error) {
+	sig, err := sampleSignature(ctx, s, o)
+	if err != nil {
+		return nil, sig, err
+	}
+	frame, err := encodeSample(ctx, s, o)
+	return frame, sig, err
+}
+func encodeSample(ctx context.Context, s Sample, o Options) (*Frame, error) {
 	// Cursor overlays are intentionally excluded from change detection.
 	im := s.Image
 	if s.Cursor != nil && s.Bounds.Contains(s.Cursor.X, s.Cursor.Y) {
@@ -229,9 +242,9 @@ func (m *Manager) prepare(ctx context.Context, s Sample, o Options) (*Frame, fin
 	}
 	data, mime, w, h, err := vision.Encode(ctx, im, "jpeg", o.Quality, o.MaxWidth)
 	if err != nil {
-		return nil, fingerprint{}, err
+		return nil, err
 	}
-	return &Frame{Kind: "full", FullBounds: s.Bounds, CapturedAt: time.Now().UTC(), Bounds: s.Bounds, Width: w, Height: h, MIME: mime, Data: data, Cursor: s.Cursor}, sig, nil
+	return &Frame{Kind: "full", FullBounds: s.Bounds, CapturedAt: time.Now().UTC(), Bounds: s.Bounds, Width: w, Height: h, MIME: mime, Data: data, Cursor: s.Cursor}, nil
 }
 func (m *Manager) Start(ctx context.Context, o Options, sources ...func(context.Context) (Sample, error)) (Status, *Frame, error) {
 	m.op.Lock()
@@ -271,6 +284,12 @@ func (m *Manager) Start(ctx context.Context, o Options, sources ...func(context.
 	if err != nil {
 		return m.Status(), nil, err
 	}
+	frame.Sequence = 1
+	frame.ChangeFraction = 1
+	returned, err := focusedDelivery(frame, o).render(ctx)
+	if err != nil {
+		return m.Status(), nil, err
+	}
 	if err = m.check(); err != nil {
 		return m.Status(), nil, err
 	}
@@ -292,8 +311,6 @@ func (m *Manager) Start(ctx context.Context, o Options, sources ...func(context.
 	}
 	root, cancel := context.WithCancel(context.Background())
 	now := time.Now()
-	frame.Sequence = 1
-	frame.ChangeFraction = 1
 	m.mu.Lock()
 	m.generation++
 	m.focusEpoch++
@@ -316,7 +333,7 @@ func (m *Manager) Start(ctx context.Context, o Options, sources ...func(context.
 	m.pendingFull = false
 	m.lastActivity = now
 	m.persistent = persistence{}
-	m.status = Status{ModelMaxWidth: o.ModelMaxWidth, StabilityMS: o.Stability.Milliseconds(), CaptureBounds: sample.Bounds, WatchRegion: cloneRect(o.WatchRegion), ReadyRegion: cloneRect(o.ReadyRegion), FocusVersion: m.focusEpoch, IgnoredRegions: len(o.IgnoreRegions), Adaptive: o.Adaptive, Regions: o.Regions, CurrentIntervalMS: o.Interval.Milliseconds(), IdleIntervalMS: o.IdleInterval.Milliseconds(), PreviewSequence: 1, ID: id, Mode: o.Mode, State: "running", Backend: o.Backend, PreviewURL: previewURL, Sequence: 1, LocalFrames: 1, SignificantFrames: 1, ImagesReturned: 1, IntervalMS: o.Interval.Milliseconds(), MinDeliveryMS: o.MinDeliveryInterval.Milliseconds(), TaskIdleTimeoutMS: o.TaskIdleTimeout.Milliseconds(), StartedAt: now.UTC(), LastCaptureAt: frame.CapturedAt, Width: frame.Width, Height: frame.Height}
+	m.status = Status{ModelMaxWidth: o.ModelMaxWidth, StabilityMS: o.Stability.Milliseconds(), CaptureBounds: sample.Bounds, WatchRegion: cloneRect(o.WatchRegion), ReadyRegion: cloneRect(o.ReadyRegion), FocusVersion: m.focusEpoch, IgnoredRegions: len(o.IgnoreRegions), Adaptive: o.Adaptive, Regions: o.Regions, CurrentIntervalMS: o.Interval.Milliseconds(), IdleIntervalMS: o.IdleInterval.Milliseconds(), PreviewSequence: 1, ID: id, Mode: o.Mode, State: "running", Backend: o.Backend, PreviewURL: previewURL, Sequence: 1, EncodedFrames: 1, LocalFrames: 1, SignificantFrames: 1, ImagesReturned: 1, IntervalMS: o.Interval.Milliseconds(), MinDeliveryMS: o.MinDeliveryInterval.Milliseconds(), TaskIdleTimeoutMS: o.TaskIdleTimeout.Milliseconds(), StartedAt: now.UTC(), LastCaptureAt: frame.CapturedAt, Width: frame.Width, Height: frame.Height}
 	if o.WatchWindow != nil {
 		m.status.WatchWindowID = o.WatchWindow.ID
 	}
@@ -326,12 +343,7 @@ func (m *Manager) Start(ctx context.Context, o Options, sources ...func(context.
 		frame.Diagnostics = &FrameDiagnostic{ChangeDiagnostic: d, Delivery: "observation_start", Image: "initial_context"}
 		m.status.LastDetection = &d
 	}
-	returned, cropErr := m.focusedFrame(ctx, frame)
-	if cropErr != nil {
-		m.mu.Unlock()
-		m.finish(generation, "error", "encode_failed", cropErr)
-		return m.Status(), nil, cropErr
-	}
+	returned.Diagnostics = copyDiagnostic(frame.Diagnostics)
 	m.signalLocked()
 	status := m.status
 	m.mu.Unlock()
@@ -408,12 +420,41 @@ func (m *Manager) loop(ctx context.Context, generation uint64, o Options, source
 			m.mu.Unlock()
 			captureStarted := time.Now().UTC()
 			sample, err := source(sampleCtx)
-			var frame *Frame
+			frame := &Frame{Bounds: sample.Bounds, CapturedAt: captureStarted}
 			var sig fingerprint
+			var baselineFrame *Frame
+			var accepted fingerprint
+			var fraction, rawFraction float64
+			var publish, pending, contextChanged bool
 			if err == nil {
-				frame, sig, err = m.prepare(sampleCtx, sample, sampleOptions)
-				if frame != nil {
-					frame.CapturedAt = captureStarted
+				sig, err = sampleSignature(sampleCtx, sample, sampleOptions)
+			}
+			if err == nil {
+				m.mu.Lock()
+				if m.generation != generation || m.status.State != "running" || m.focusEpoch != epoch {
+					m.mu.Unlock()
+					cancel()
+					continue
+				}
+				baselineFrame = m.latest
+				rawFraction = difference(m.baseline, sig)
+				accepted, fraction, pending = m.persistent.filter(m.baseline, sig, captureStarted, sampleOptions.Stability)
+				contextChanged = m.latest == nil || sample.Bounds != m.baselineBounds
+				if contextChanged {
+					accepted, fraction, pending = sig, 1, false
+					m.persistent = persistence{}
+				}
+				publish = contextChanged || (fraction > 0 && fraction >= o.ChangeThreshold)
+				// Preview and action waits may consume a raw sample before it
+				// satisfies the persistence threshold for normal delivery.
+				encode := publish || sampleOptions.Preview || m.waiters > 0
+				frame.Width, frame.Height = m.status.Width, m.status.Height
+				m.mu.Unlock()
+				if encode {
+					frame, err = encodeSample(sampleCtx, sample, sampleOptions)
+					if err == nil {
+						frame.CapturedAt = captureStarted
+					}
 				}
 			}
 			m.mu.Lock()
@@ -440,16 +481,11 @@ func (m *Manager) loop(ctx context.Context, generation uint64, o Options, source
 				m.mu.Unlock()
 				continue
 			}
-			rawFraction := difference(m.baseline, sig)
-			accepted, fraction, pending := m.persistent.filter(m.baseline, sig, frame.CapturedAt, sampleOptions.Stability)
-			contextChanged := m.latest == nil || frame.Bounds != m.baselineBounds
-			if contextChanged {
-				accepted = sig
-				fraction = 1
-				pending = false
-				m.persistent = persistence{}
+			// An action may have acknowledged a newer baseline during encoding.
+			if baselineFrame != m.latest {
+				m.mu.Unlock()
+				continue
 			}
-			publish := contextChanged || (fraction > 0 && fraction >= o.ChangeThreshold)
 			if o.Diagnostics {
 				reason := "unchanged"
 				switch {
@@ -477,6 +513,9 @@ func (m *Manager) loop(ctx context.Context, generation uint64, o Options, source
 				}
 				frame.Diagnostics = &FrameDiagnostic{ChangeDiagnostic: d}
 				m.status.LastDetection = &d
+			}
+			if len(frame.Data) > 0 {
+				m.status.EncodedFrames++
 			}
 			m.status.LocalFrames++
 			m.status.LastCaptureAt = frame.CapturedAt
@@ -660,21 +699,49 @@ func (m *Manager) Next(ctx context.Context, id string, after uint64, wait time.D
 			return status, nil, nil
 		}
 		cooldown := time.Until(m.lastDelivery.Add(m.opts.MinDeliveryInterval))
-		if m.latest != nil && m.latest.Sequence > max(after, m.deliveredSequence) && cooldown <= 0 {
-			frame, err := m.regionFrame(ctx, after)
+		if !m.delivering && m.latest != nil && m.latest.Sequence > max(after, m.deliveredSequence) && cooldown <= 0 {
+			plan := m.regionDelivery(after)
+			epoch := m.focusEpoch
+			m.delivering = true
+			m.mu.Unlock()
+			frame, err := plan.render(ctx)
+			if err == nil {
+				err = m.check()
+			}
+			m.mu.Lock()
+			m.delivering = false
+			m.signalLocked()
+			if err == nil {
+				err = ctx.Err()
+			}
 			if err != nil {
 				m.mu.Unlock()
-				return status, nil, err
+				return m.Status(), nil, err
+			}
+			if m.status.ID != id || (m.status.State == "running" && (m.focusEpoch != epoch || m.latest == nil || m.latest.Bounds != plan.frame.Bounds)) {
+				status = m.status
+				m.mu.Unlock()
+				return status, nil, fmt.Errorf("observation changed during delivery")
+			}
+			if m.status.State != "running" {
+				status = m.status
+				m.mu.Unlock()
+				return status, nil, nil
 			}
 			if frame.Kind == "full" {
 				m.lastFull = time.Now()
 			}
-			m.dirty = image.Rectangle{}
-			m.pendingFull = false
+			if m.latest.Sequence == frame.Sequence {
+				m.dirty = image.Rectangle{}
+				m.pendingFull = false
+			} else {
+				// The sampler accumulated more changes while the image was rendered.
+				m.pendingFull = true
+			}
 			m.deliveredSequence = frame.Sequence
 			m.lastDelivery = time.Now()
 			m.status.ImagesReturned++
-			status = m.status
+			status.ImagesReturned = m.status.ImagesReturned
 			m.mu.Unlock()
 			return status, frame, nil
 		}

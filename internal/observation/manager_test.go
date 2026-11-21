@@ -403,8 +403,12 @@ func TestIgnoredRegionsDoNotWakeModelButRemainVisible(t *testing.T) {
 	}, nil)
 	defer m.Close()
 	o := options()
+	o.Preview = true
 	o.IgnoreRegions = []platform.Rect{{X: -320, Width: 50, Height: 30}}
 	s, _, err := m.Start(context.Background(), o)
+	if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) {
+		t.Skip("preview listener unavailable")
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,5 +433,60 @@ func TestIgnoredRegionsDoNotWakeModelButRemainVisible(t *testing.T) {
 	_, frame, err = m.Next(context.Background(), s.ID, 1, time.Second)
 	if err != nil || frame == nil {
 		t.Fatal("real content change missed", err)
+	}
+}
+
+func TestIdleSamplesSkipJPEG(t *testing.T) {
+	var value atomic.Uint32
+	var cursor atomic.Int32
+	m := New(source(&value, &cursor), nil)
+	defer m.Close()
+	s, _, err := m.Start(context.Background(), options())
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, func() bool { return m.Status().LocalFrames >= 4 })
+	idle := m.Status()
+	if idle.EncodedFrames != 1 {
+		t.Fatal(idle)
+	}
+	value.Store(180)
+	changed, f, err := m.Next(context.Background(), s.ID, s.Sequence, 2*time.Second)
+	if err != nil || f == nil || len(f.Data) == 0 || changed.EncodedFrames != 2 {
+		t.Fatal(changed, err)
+	}
+	t.Logf("idle samples=%d JPEG encodes=%d", idle.LocalFrames, idle.EncodedFrames)
+}
+
+func BenchmarkIdleObservationPreparation(b *testing.B) {
+	im := image.NewRGBA(image.Rect(0, 0, 1920, 1080))
+	for y := 0; y < 1080; y++ {
+		for x := 0; x < 1920; x++ {
+			im.SetRGBA(x, y, color.RGBA{uint8(x / 8), uint8(y / 8), uint8((x + y) / 16), 255})
+		}
+	}
+	sample := Sample{Image: im, Bounds: platform.Rect{Width: 1920, Height: 1080}}
+	o := options()
+	o.MaxWidth = 1280
+	m := New(nil, nil)
+	for _, encode := range []bool{true, false} {
+		name := "signature_only"
+		if encode {
+			name = "signature_and_JPEG"
+		}
+		b.Run(name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				var err error
+				if encode {
+					_, _, err = m.prepare(context.Background(), sample, o)
+				} else {
+					_, err = sampleSignature(context.Background(), sample, o)
+				}
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }

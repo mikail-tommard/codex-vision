@@ -12,6 +12,9 @@ import (
 )
 
 type fake struct {
+	monitors      string
+	rootSize      string
+	rawFrame      []byte
 	locked        bool
 	calls         []string
 	x, y          int
@@ -50,11 +53,28 @@ func (f *fake) Run(ctx context.Context, name string, args ...string) ([]byte, er
 			lock = "yes"
 		}
 		return []byte("Id=c1\nUser=1000\nSeat=seat0\nActive=yes\nRemote=no\nType=x11\nLockedHint=" + lock + "\nDisplay=:0\n"), nil
+	case name == "ffmpeg":
+		return f.rawFrame, nil
+	case name == "xdotool" && args[0] == "getdisplaygeometry":
+		if f.rootSize != "" {
+			return []byte(f.rootSize), nil
+		}
+		return []byte("640 480"), nil
 	case name == "xrandr":
+		if f.monitors != "" {
+			return []byte(f.monitors), nil
+		}
 		return []byte("Monitors: 1\n 0: +*HDMI-1 640/300x480/200+0+0 HDMI-1\n"), nil
 	case name == "import":
 		var out bytes.Buffer
-		_ = png.Encode(&out, image.NewRGBA(image.Rect(0, 0, 640, 480)))
+		w, h := 640, 480
+		if len(args) > 3 && args[2] == "-crop" {
+			var x, y int
+			if _, e := fmt.Sscanf(args[3], "%dx%d+%d+%d", &w, &h, &x, &y); e != nil {
+				return nil, e
+			}
+		}
+		_ = png.Encode(&out, image.NewRGBA(image.Rect(0, 0, w, h)))
 		return out.Bytes(), nil
 	case name == "xprop" && args[0] == "-root":
 		return []byte("_NET_CLIENT_LIST_STACKING(WINDOW): window id # 0x64"), nil
@@ -166,5 +186,31 @@ func TestUnsafeNativeIDsRefused(t *testing.T) {
 	d, _ := testDesktop(t)
 	if _, e := d.describe(context.Background(), "1; touch /tmp/no"); e == nil {
 		t.Fatal("invalid id accepted")
+	}
+}
+
+func TestX11RegionalCapture(t *testing.T) {
+	d, f := testDesktop(t)
+	d.paths["ffmpeg"] = "ffmpeg"
+	f.monitors = "Monitors: 1\n 0: +*DP-1 640/300x480/200-100-50 DP-1\n"
+	region := platform.Rect{X: -90, Y: -30, Width: 12, Height: 8}
+	f.rawFrame = make([]byte, 12*8*4)
+	im, err := d.Capture(context.Background(), region)
+	if err != nil || im.Bounds() != image.Rect(0, 0, 12, 8) || !strings.Contains(strings.Join(f.calls, "\n"), "-video_size 12x8 -grab_x 10 -grab_y 20") {
+		t.Fatal(err, f.calls)
+	}
+	f.rawFrame = f.rawFrame[:4]
+	if _, err = d.Capture(context.Background(), region); err == nil {
+		t.Fatal("accepted truncated raw frame")
+	}
+	f.rawFrame = make([]byte, 12*8*4)
+	f.hook = func(name string, _ []string) error {
+		if name == "ffmpeg" {
+			f.monitors = strings.Replace(f.monitors, "-100-50", "-99-50", 1)
+		}
+		return nil
+	}
+	if _, err = d.Capture(context.Background(), region); err == nil {
+		t.Fatal("accepted changed monitor layout")
 	}
 }

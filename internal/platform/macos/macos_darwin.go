@@ -23,6 +23,7 @@ import (
 	"image"
 	"image/draw"
 	"image/png"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -133,6 +134,10 @@ func (d *Desktop) Active(ctx context.Context) (platform.Window, error) {
 	}
 	return ws[0], nil
 }
+func captureRect(r image.Rectangle) C.cv_capture_rect {
+	return C.cv_capture_rect{x: C.int(r.Min.X), y: C.int(r.Min.Y), width: C.int(r.Dx()), height: C.int(r.Dy())}
+}
+
 func (d *Desktop) Capture(ctx context.Context, r platform.Rect) (image.Image, error) {
 	if !r.Valid() {
 		return nil, fmt.Errorf("invalid capture bounds")
@@ -144,51 +149,84 @@ func (d *Desktop) Capture(ctx context.Context, r platform.Rect) (image.Image, er
 	if e != nil {
 		return nil, e
 	}
+	out, e := captureDisplays(ctx, r, ms, captureDisplay)
+	if e != nil {
+		return nil, e
+	}
+	after, e := d.Monitors(ctx)
+	if e != nil {
+		return nil, e
+	}
+	if !slices.Equal(ms, after) {
+		return nil, fmt.Errorf("macOS display layout changed during capture")
+	}
+	return out, ctx.Err()
+}
+
+func captureDisplays(ctx context.Context, r platform.Rect, ms []platform.Monitor, grab func(context.Context, string, image.Rectangle, image.Rectangle) (image.Image, error)) (image.Image, error) {
 	bounds, e := platform.Bounds(ms)
 	if e != nil || !bounds.Includes(r) {
 		return nil, fmt.Errorf("region outside virtual desktop")
 	}
+	view := image.Rect(r.X, r.Y, r.X+r.Width, r.Y+r.Height)
+	if len(ms) == 1 {
+		display := image.Rect(bounds.X, bounds.Y, bounds.X+bounds.Width, bounds.Y+bounds.Height)
+		return grab(ctx, ms[0].ID, display, view)
+	}
 	out := image.NewRGBA(image.Rect(0, 0, r.Width, r.Height))
 	draw.Draw(out, out.Bounds(), image.Black, image.Point{}, draw.Src)
 	for _, m := range ms {
-		intersection := image.Rect(r.X, r.Y, r.X+r.Width, r.Y+r.Height).Intersect(image.Rect(m.Bounds.X, m.Bounds.Y, m.Bounds.X+m.Bounds.Width, m.Bounds.Y+m.Bounds.Height))
+		display := image.Rect(m.Bounds.X, m.Bounds.Y, m.Bounds.X+m.Bounds.Width, m.Bounds.Y+m.Bounds.Height)
+		intersection := view.Intersect(display)
 		if intersection.Empty() {
 			continue
 		}
 		if e = ctx.Err(); e != nil {
 			return nil, e
 		}
-		id, e := strconv.ParseUint(m.ID, 10, 32)
+		im, e := grab(ctx, m.ID, display, intersection)
 		if e != nil {
 			return nil, e
 		}
-		timeout := 5000
-		if deadline, ok := ctx.Deadline(); ok {
-			timeout = max(1, int(time.Until(deadline)/time.Millisecond))
-		}
-		var data unsafe.Pointer
-		var n C.size_t
-		var message *C.char
-		ok := C.cv_capture(C.uint32_t(id), C.int(timeout), &data, &n, &message)
-		if message != nil {
-			reason := C.GoString(message)
-			C.free(unsafe.Pointer(message))
-			return nil, fmt.Errorf("%s", reason)
-		}
-		if ok == 0 || data == nil {
-			return nil, fmt.Errorf("native capture failed")
-		}
-		encoded := C.GoBytes(data, C.int(n))
-		C.free(data)
-		im, e := png.Decode(bytes.NewReader(encoded))
-		if e != nil {
-			return nil, e
-		}
-		if e = vision.Composite(ctx, out, image.Rect(r.X, r.Y, r.X+r.Width, r.Y+r.Height), image.Rect(m.Bounds.X, m.Bounds.Y, m.Bounds.X+m.Bounds.Width, m.Bounds.Y+m.Bounds.Height), im); e != nil {
-			return nil, e
-		}
+		draw.Draw(out, intersection.Sub(view.Min), im, im.Bounds().Min, draw.Src)
 	}
 	return out, ctx.Err()
+}
+func captureDisplay(ctx context.Context, displayID string, display, intersection image.Rectangle) (image.Image, error) {
+	id, e := strconv.ParseUint(displayID, 10, 32)
+	if e != nil {
+		return nil, e
+	}
+	timeout := 5000
+	if deadline, ok := ctx.Deadline(); ok {
+		timeout = max(1, int(time.Until(deadline)/time.Millisecond))
+	}
+	var data unsafe.Pointer
+	var n C.size_t
+	var message *C.char
+	ok := C.cv_capture(C.uint32_t(id), captureRect(display), captureRect(intersection), C.int(timeout), &data, &n, &message)
+	if message != nil {
+		reason := C.GoString(message)
+		C.free(unsafe.Pointer(message))
+		return nil, fmt.Errorf("%s", reason)
+	}
+	if ok == 0 || data == nil {
+		return nil, fmt.Errorf("native capture failed")
+	}
+	encoded := C.GoBytes(data, C.int(n))
+	C.free(data)
+	cfg, e := png.DecodeConfig(bytes.NewReader(encoded))
+	if e != nil {
+		return nil, e
+	}
+	if cfg.Width != intersection.Dx() || cfg.Height != intersection.Dy() {
+		return nil, fmt.Errorf("regional capture dimensions differ from requested desktop bounds")
+	}
+	im, e := png.Decode(bytes.NewReader(encoded))
+	if e != nil {
+		return nil, e
+	}
+	return im, ctx.Err()
 }
 func (d *Desktop) Execute(ctx context.Context, a platform.Action) (err error) {
 	if e := ctx.Err(); e != nil {

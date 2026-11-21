@@ -1,8 +1,6 @@
 package observation
 
 import (
-	"bytes"
-	"context"
 	"example.com/codex-vision/internal/platform"
 	"fmt"
 	"image"
@@ -94,6 +92,10 @@ func (m *Manager) FocusState(id string) (*platform.Rect, *platform.Rect, *platfo
 func view(src image.Image, bounds, region platform.Rect) image.Image {
 	b := src.Bounds()
 	r := image.Rect(b.Min.X+region.X-bounds.X, b.Min.Y+region.Y-bounds.Y, b.Min.X+region.X-bounds.X+region.Width, b.Min.Y+region.Y-bounds.Y+region.Height)
+	return cropImage(src, r)
+}
+
+func cropImage(src image.Image, r image.Rectangle) image.Image {
 	if sub, ok := src.(interface {
 		SubImage(image.Rectangle) image.Image
 	}); ok {
@@ -102,28 +104,4 @@ func view(src image.Image, bounds, region platform.Rect) image.Image {
 	out := image.NewRGBA(image.Rect(0, 0, r.Dx(), r.Dy()))
 	draw.Draw(out, out.Bounds(), src, r.Min, draw.Src)
 	return out
-}
-
-// focusedFrame keeps JPEG cropping in delivery, so a full local preview can use
-// the same capture while the model receives only its selected task region.
-func (m *Manager) focusedFrame(ctx context.Context, frame *Frame) (*Frame, error) {
-	if m.opts.WatchRegion == nil || *m.opts.WatchRegion == frame.Bounds {
-		return m.modelFrame(ctx, frame)
-	}
-	im, _, err := image.Decode(bytes.NewReader(frame.Data))
-	if err != nil {
-		return nil, err
-	}
-	region := *m.opts.WatchRegion
-	copyFrame := *frame
-	copyFrame.FullBounds = region
-	frame = &copyFrame
-	source := frame.Bounds
-	b := im.Bounds()
-	r := image.Rect((region.X-source.X)*b.Dx()/source.Width, (region.Y-source.Y)*b.Dy()/source.Height, ((region.X-source.X+region.Width)*b.Dx()+source.Width-1)/source.Width, ((region.Y-source.Y+region.Height)*b.Dy()+source.Height-1)/source.Height).Intersect(b)
-	cropped, err := cropFrame(ctx, frame, im, r, m.opts.Quality, "full", 0)
-	if err != nil {
-		return nil, err
-	}
-	return m.modelFrame(ctx, cropped)
 }

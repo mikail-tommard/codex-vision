@@ -68,7 +68,7 @@ func (m *Manager) sample(ctx context.Context, id string, epoch, after uint64) (s
 			m.mu.Unlock()
 			return sampledState{}, fmt.Errorf("observation %s; do not repeat the action", state)
 		}
-		if m.preview != nil && len(m.sampleSig.rgb) > 0 && m.previewSequence > after {
+		if m.preview != nil && len(m.preview.Data) > 0 && len(m.sampleSig.rgb) > 0 && m.previewSequence > after {
 			out := sampledState{m.preview, m.sampleSig, m.markerSig, m.previewSequence, epoch, m.generation}
 			m.mu.Unlock()
 			return out, nil
@@ -84,16 +84,42 @@ func (m *Manager) sample(ctx context.Context, id string, epoch, after uint64) (s
 }
 func (m *Manager) deliverSample(ctx context.Context, id string, s sampledState) (Status, *Frame, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.status.ID != id || m.focusEpoch != s.epoch || m.status.State != "running" {
-		return m.status, nil, fmt.Errorf("observation changed before delivery")
+	for m.delivering && m.status.ID == id && m.focusEpoch == s.epoch && m.status.State == "running" {
+		changed := m.changed
+		m.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return m.Status(), nil, ctx.Err()
+		case <-changed:
+		}
+		m.mu.Lock()
 	}
-	frame, err := m.focusedFrame(ctx, s.frame)
+	if m.status.ID != id || m.focusEpoch != s.epoch || m.status.State != "running" {
+		status := m.status
+		m.mu.Unlock()
+		return status, nil, fmt.Errorf("observation changed before delivery")
+	}
+	plan := focusedDelivery(s.frame, m.opts)
+	m.delivering = true
+	m.mu.Unlock()
+	frame, err := plan.render(ctx)
+	if err == nil {
+		err = m.check()
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.delivering = false
+	m.signalLocked()
 	if err != nil {
 		return m.status, nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return m.status, nil, err
+	}
+	if m.status.ID != id || m.focusEpoch != s.epoch || m.status.State != "running" || (m.latest != nil && m.latest.Bounds != s.frame.Bounds) {
+		return m.status, nil, fmt.Errorf("observation changed during delivery")
+	}
 	copyFrame := *frame
-	copyFrame.Diagnostics = copyDiagnostic(copyFrame.Diagnostics)
 	if copyFrame.Diagnostics != nil {
 		copyFrame.Diagnostics.Delivery = "action_result"
 		copyFrame.Diagnostics.Image = "action_context"

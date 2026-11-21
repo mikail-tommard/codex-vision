@@ -3,6 +3,8 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"slices"
 	"sync"
 	"time"
 
@@ -27,6 +29,7 @@ type agentView struct {
 	ImageSequence           uint64
 	ObservedSequence        uint64
 	ObservedControls        platform.ControlSnapshot
+	ControlsRevision        string
 	ControlsAvailable       bool
 	Context                 *platform.UIContext
 }
@@ -36,34 +39,37 @@ type agentViews struct {
 }
 
 type DesktopObserveArgs struct {
-	Mode            string         `json:"mode,omitempty" jsonschema:"New observation: task (default) or continuous only on explicit user request. Existing stream mode cannot be changed here"`
-	IncludeControls *bool          `json:"include_controls,omitempty" jsonschema:"Read and return UI controls: default false in compact, true in full. Enable for target_id or discovering UI predicates; unnecessary for visual keyboard tasks"`
-	WindowID        string         `json:"window_id,omitempty" jsonschema:"Default current foreground window; never activates or switches applications"`
-	ID              string         `json:"observation_id,omitempty"`
-	After           uint64         `json:"after_sequence,omitempty"`
-	Region          *platform.Rect `json:"watch_region,omitempty"`
-	WaitMS          *int           `json:"wait_ms,omitempty" jsonschema:"0..30000, default 0: unchanged result has no image; use bounded long polling when awaiting a new state"`
-	IntervalMS      int            `json:"interval_ms,omitempty" jsonschema:"New task capture interval 250..10000ms; default 1000; ignored for an existing stream"`
-	MinDeliveryMS   int            `json:"min_delivery_ms,omitempty" jsonschema:"New task delivery interval 250..60000ms; default 3000"`
-	Preview         bool           `json:"preview,omitempty" jsonschema:"Default false; used only when starting a new task observation"`
-	IncludeFields   bool           `json:"include_fields,omitempty" jsonschema:"Request fresh text-field IDs only for form tasks; values omitted"`
-	Labels          []string       `json:"labels,omitempty"`
-	MaxNodes        int            `json:"max_nodes,omitempty" jsonschema:"AX traversal bound 1..1000, default 500"`
+	SinceControlsRevision string         `json:"since_controls_revision,omitempty" jsonschema:"Last controls_revision received. If unchanged, reuse target IDs only with the newly returned view_id"`
+	Mode                  string         `json:"mode,omitempty" jsonschema:"New observation: task (default) or continuous only on explicit user request. Existing stream mode cannot be changed here"`
+	IncludeControls       *bool          `json:"include_controls,omitempty" jsonschema:"Read and return UI controls: default false in compact, true in full. Enable for target_id or discovering UI predicates; unnecessary for visual keyboard tasks"`
+	WindowID              string         `json:"window_id,omitempty" jsonschema:"Default current foreground window; never activates or switches applications"`
+	ID                    string         `json:"observation_id,omitempty"`
+	After                 uint64         `json:"after_sequence,omitempty"`
+	CaptureRegion         *platform.Rect `json:"capture_region,omitempty" jsonschema:"Fixed desktop-coordinate capture bounds for a new observation, including preview. watch_region selects attention within these bounds."`
+	Region                *platform.Rect `json:"watch_region,omitempty"`
+	WaitMS                *int           `json:"wait_ms,omitempty" jsonschema:"0..30000, default 0: unchanged result has no image; use bounded long polling when awaiting a new state"`
+	IntervalMS            int            `json:"interval_ms,omitempty" jsonschema:"New task capture interval 250..10000ms; default 1000; ignored for an existing stream"`
+	MinDeliveryMS         int            `json:"min_delivery_ms,omitempty" jsonschema:"New task delivery interval 250..60000ms; default 3000"`
+	Preview               bool           `json:"preview,omitempty" jsonschema:"Default false; used only when starting a new task observation"`
+	IncludeFields         bool           `json:"include_fields,omitempty" jsonschema:"Request fresh text-field IDs only for form tasks; values omitted"`
+	Labels                []string       `json:"labels,omitempty"`
+	MaxNodes              int            `json:"max_nodes,omitempty" jsonschema:"AX traversal bound 1..1000, default 500"`
 }
 type DesktopActArgs struct {
-	WatchRegion    *platform.Rect `json:"watch_region,omitempty" jsonschema:"Optional task region chosen from this view; must fit both the pinned window and existing capture. Changes attention in the same action call"`
-	ViewID         string         `json:"view_id"`
-	Steps          []DesktopStep  `json:"steps"`
-	Coordinates    string         `json:"coordinates,omitempty" jsonschema:"desktop (default) or image: x/y relative to the image returned in this view; target_id ignores this option"`
-	Refocus        *bool          `json:"refocus,omitempty" jsonschema:"Default true: at most one policy-authorized preflight focus when a different window is active; never retries native focus failure or batch input"`
-	Expect         *ExpectedState `json:"expect,omitempty"`
-	ReadyWhen      *ReadyWhen     `json:"ready_when,omitempty"`
-	WaitFor        string         `json:"wait_for,omitempty" jsonschema:"change (default): own stable result, including 2048. response: two visual phases only when awaiting a separate response; not proof of an opponent turn"`
-	ResultMode     string         `json:"result_mode,omitempty"`
-	Motion         string         `json:"motion,omitempty"`
-	SettleMS       int            `json:"settle_ms,omitempty" jsonschema:"100..2000ms; omitted or 0 uses 350ms"`
-	WaitMS         int            `json:"wait_ms,omitempty" jsonschema:"100..30000ms; omitted or 0 uses local default up to 25000ms"`
-	ImageOnTimeout bool           `json:"image_on_timeout,omitempty"`
+	SinceControlsRevision string         `json:"since_controls_revision,omitempty" jsonschema:"Last controls_revision received. If unchanged, reuse target IDs only with the newly returned view_id"`
+	WatchRegion           *platform.Rect `json:"watch_region,omitempty" jsonschema:"Optional task region chosen from this view; must fit both the pinned window and existing capture. Changes attention in the same action call"`
+	ViewID                string         `json:"view_id"`
+	Steps                 []DesktopStep  `json:"steps"`
+	Coordinates           string         `json:"coordinates,omitempty" jsonschema:"desktop (default) or image: x/y relative to the image returned in this view; target_id ignores this option"`
+	Refocus               *bool          `json:"refocus,omitempty" jsonschema:"Default true: at most one policy-authorized preflight focus when a different window is active; never retries native focus failure or batch input"`
+	Expect                *ExpectedState `json:"expect,omitempty"`
+	ReadyWhen             *ReadyWhen     `json:"ready_when,omitempty"`
+	WaitFor               string         `json:"wait_for,omitempty" jsonschema:"change (default): own stable result, including 2048. response: two visual phases only when awaiting a separate response; not proof of an opponent turn"`
+	ResultMode            string         `json:"result_mode,omitempty"`
+	Motion                string         `json:"motion,omitempty"`
+	SettleMS              int            `json:"settle_ms,omitempty" jsonschema:"100..2000ms; omitted or 0 uses 350ms"`
+	WaitMS                int            `json:"wait_ms,omitempty" jsonschema:"100..30000ms; omitted or 0 uses local default up to 25000ms"`
+	ImageOnTimeout        bool           `json:"image_on_timeout,omitempty"`
 }
 
 func (v *Service) registerAgent(s *mcp.Server) {
@@ -88,6 +94,9 @@ func (v *Service) agentWindow(ctx context.Context, id string) (w platform.Window
 }
 
 func (v *Service) desktopObserve(ctx context.Context, a DesktopObserveArgs) (*mcp.CallToolResult, error) {
+	if a.CaptureRegion != nil && !a.CaptureRegion.Valid() {
+		return nil, fmt.Errorf("invalid capture_region")
+	}
 	if a.Mode != "" && a.Mode != "task" && a.Mode != "continuous" {
 		return nil, fmt.Errorf("mode must be task or continuous")
 	}
@@ -123,6 +132,9 @@ func (v *Service) desktopObserve(ctx context.Context, a DesktopObserveArgs) (*mc
 		return nil, fmt.Errorf("unknown observation_id; do not restart an existing stream blindly")
 	}
 	if status.State == "running" || status.State == "paused" {
+		if a.CaptureRegion != nil && *a.CaptureRegion != status.CaptureBounds {
+			return nil, fmt.Errorf("capture_region differs from the active observation")
+		}
 		if a.Mode != "" && a.Mode != status.Mode {
 			return nil, fmt.Errorf("existing observation has mode %s; stop it explicitly before changing mode", status.Mode)
 		}
@@ -146,7 +158,9 @@ func (v *Service) desktopObserve(ctx context.Context, a DesktopObserveArgs) (*mc
 	}
 	if a.Region == nil {
 		b := status.CaptureBounds
-		if status.State != "running" {
+		if a.CaptureRegion != nil {
+			b = *a.CaptureRegion
+		} else if status.State != "running" {
 			var monitors []platform.Monitor
 			err = v.withLocalRead(ctx, func() error { var e error; monitors, e = v.Desktop.Monitors(ctx); return e })
 			if err != nil {
@@ -163,11 +177,14 @@ func (v *Service) desktopObserve(ctx context.Context, a DesktopObserveArgs) (*mc
 			return nil, fmt.Errorf("foreground window outside capture bounds")
 		}
 	}
+	if a.CaptureRegion != nil && !a.CaptureRegion.Includes(region) {
+		return nil, fmt.Errorf("watch_region must fit capture_region")
+	}
 	var out *mcp.CallToolResult
 	if status.State != "running" {
 		err = v.withLocalRead(ctx, func() error {
 			var e error
-			out, e = v.startObservation(ctx, ObserveStartArgs{Mode: a.Mode, WindowID: w.ID, WatchRegion: &region, Preview: &a.Preview, IntervalMS: a.IntervalMS, MinDeliveryMS: a.MinDeliveryMS})
+			out, e = v.startObservation(ctx, ObserveStartArgs{Mode: a.Mode, Region: a.CaptureRegion, WindowID: w.ID, WatchRegion: &region, Preview: &a.Preview, IntervalMS: a.IntervalMS, MinDeliveryMS: a.MinDeliveryMS})
 			return e
 		})
 	} else {
@@ -201,10 +218,13 @@ func (v *Service) desktopObserve(ctx context.Context, a DesktopObserveArgs) (*mc
 	if a.IncludeControls != nil {
 		includeControls = *a.IncludeControls
 	}
-	return v.attachAgentView(ctx, w, region, a.MaxNodes, includeControls, a.IncludeFields, a.Labels, out)
+	v.views.mu.Lock()
+	previous := v.views.current
+	v.views.mu.Unlock()
+	return v.attachAgentView(ctx, previous, a.SinceControlsRevision, w, region, a.MaxNodes, includeControls, a.IncludeFields, a.Labels, out)
 }
 
-func (v *Service) attachAgentView(ctx context.Context, w platform.Window, region platform.Rect, maxNodes int, includeControls, includeFields bool, labels []string, out *mcp.CallToolResult) (*mcp.CallToolResult, error) {
+func (v *Service) attachAgentView(ctx context.Context, previous *agentView, since string, w platform.Window, region platform.Rect, maxNodes int, includeControls, includeFields bool, labels []string, out *mcp.CallToolResult) (*mcp.CallToolResult, error) {
 	viewID, err := opaqueID()
 	if err != nil {
 		return nil, err
@@ -218,6 +238,8 @@ func (v *Service) attachAgentView(ctx context.Context, w platform.Window, region
 		view.ImageWidth = f.Width
 		view.ImageHeight = f.Height
 		view.ImageSequence = f.Sequence
+		// Newer pixels can arrive while this image is being prepared for delivery.
+		view.ObservedSequence = f.Sequence
 	} else if unchanged, ok := meta["changed"].(bool); ok && !unchanged && !out.IsError {
 		// An unchanged observation must not discard the coordinate system of the
 		// last delivered image. Never carry it across input, attention, or a new
@@ -226,7 +248,7 @@ func (v *Service) attachAgentView(ctx context.Context, w platform.Window, region
 		view.inheritImageCoordinates(v.views.current, status, time.Now())
 		v.views.mu.Unlock()
 	}
-	controls := []map[string]any{}
+	meta["controls"] = []map[string]any{}
 	if !includeControls {
 		meta["controls_status"] = map[string]any{"available": false, "reason": "not requested; use include_controls=true to discover controls"}
 	} else if _, supported := v.Desktop.(platform.ControlReader); supported {
@@ -238,8 +260,9 @@ func (v *Service) attachAgentView(ctx context.Context, w platform.Window, region
 			if raw.Context != nil {
 				context := *raw.Context
 				view.Context = &context
+				view.ObservedControls.Context = &context
 			}
-			view.ObservedControls.Controls = append([]platform.UIControl(nil), raw.Controls...)
+			view.ObservedControls.Controls = slices.Clone(raw.Controls)
 			for i := range view.ObservedControls.Controls {
 				if enabled := raw.Controls[i].Enabled; enabled != nil {
 					value := *enabled
@@ -248,25 +271,11 @@ func (v *Service) attachAgentView(ctx context.Context, w platform.Window, region
 			}
 			view.ControlsAvailable = true
 			meta["controls_status"] = map[string]any{"available": true, "truncated": raw.Truncated, "omitted": max(0, len(raw.Controls)-64)}
-			for _, c := range raw.Controls[:min(64, len(raw.Controls))] {
-				item := map[string]any{"label": c.Label, "role": c.Role, "enabled": c.Enabled, "bounds": c.Bounds}
-				if !raw.Truncated && c.Enabled != nil && *c.Enabled && c.Bounds.Valid() && w.Bounds.Includes(c.Bounds) {
-					id, e := opaqueID()
-					if e != nil {
-						return nil, e
-					}
-					enabled := *c.Enabled
-					c.Enabled = &enabled
-					view.Controls[id] = c
-					item["target_id"] = id
-				}
-				controls = append(controls, item)
-			}
+
 		}
 	} else {
 		meta["controls_status"] = map[string]any{"available": false, "reason": "unsupported backend; use visual coordinates"}
 	}
-	meta["controls"] = controls
 	if includeFields {
 		if reader, supported := v.Desktop.(platform.UIReader); supported {
 			var fields map[string]any
@@ -307,6 +316,41 @@ func (v *Service) attachAgentView(ctx context.Context, w platform.Window, region
 	}
 	if !sameAgentWindow(w, after) {
 		return nil, fmt.Errorf("window changed during unified observation")
+	}
+	if view.ControlsAvailable {
+		raw := view.ObservedControls
+		view.ControlsRevision = view.ID
+		reuse := previous != nil && since != "" && since == previous.ControlsRevision &&
+			time.Now().Before(previous.Expires) && previous.ObservationID == view.ObservationID &&
+			previous.FocusVersion == view.FocusVersion && previous.Region == region &&
+			sameDiscoveryWindow(previous.Window, after) && previous.MaxNodes == maxNodes &&
+			reflect.DeepEqual(previous.Context, view.Context) &&
+			reflect.DeepEqual(previous.ObservedControls, view.ObservedControls)
+		if reuse {
+			view.ControlsRevision = previous.ControlsRevision
+			view.Controls = previous.Controls
+			delete(meta, "controls")
+		}
+		meta["controls_revision"] = view.ControlsRevision
+		meta["controls_changed"] = !reuse
+		if !reuse {
+			controls := make([]map[string]any, 0, min(64, len(raw.Controls)))
+			for _, c := range raw.Controls[:min(64, len(raw.Controls))] {
+				item := map[string]any{"label": c.Label, "role": c.Role, "enabled": c.Enabled, "bounds": c.Bounds}
+				if !raw.Truncated && c.Enabled != nil && *c.Enabled && c.Bounds.Valid() && w.Bounds.Includes(c.Bounds) {
+					id, e := opaqueID()
+					if e != nil {
+						return nil, e
+					}
+					enabled := *c.Enabled
+					c.Enabled = &enabled
+					view.Controls[id] = c
+					item["target_id"] = id
+				}
+				controls = append(controls, item)
+			}
+			meta["controls"] = controls
+		}
 	}
 	decorated, err := v.Session.DescribeWindows(ctx, []platform.Window{after})
 	if err != nil {
@@ -586,7 +630,7 @@ func (v *Service) desktopAct(ctx context.Context, a DesktopActArgs) (*mcp.CallTo
 	out = replaceMetadata(out, meta)
 	interaction, _ := meta["interaction"].(observation.ActionWaitResult)
 	if !out.IsError && interaction.Posted && !interaction.TimedOut {
-		refreshed, e := v.attachAgentView(ctx, view.Window, region, view.MaxNodes, view.IncludeControls, false, nil, out)
+		refreshed, e := v.attachAgentView(ctx, view, a.SinceControlsRevision, view.Window, region, view.MaxNodes, view.IncludeControls, false, nil, out)
 		if e == nil {
 			return refreshed, nil
 		}

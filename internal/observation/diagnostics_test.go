@@ -70,17 +70,17 @@ func TestDeliveryReasonsCoalescingAndImmutability(t *testing.T) {
 	copyFrame := *m.latest
 	copyFrame.Sequence = 4
 	m.latest = &copyFrame
-	f, e := m.regionFrame(context.Background(), started.Sequence)
+	f, e := m.regionDelivery(started.Sequence).render(context.Background())
 	if e != nil || f.Diagnostics == nil || f.Diagnostics.Image != "changed_region" || f.Diagnostics.Coalesced != 2 || f.Diagnostics.AccumulatedBounds == nil {
 		m.mu.Unlock()
 		t.Fatal(f, e)
 	}
-	_, e = m.regionFrame(context.Background(), 0)
+	_, e = m.regionDelivery(0).render(context.Background())
 	if e != nil || original.Delivery != "observation_start" || original.Image != "initial_context" {
 		m.mu.Unlock()
 		t.Fatal("delivery metadata mutated cached frame", original, e)
 	}
-	f, e = m.regionFrame(context.Background(), 0)
+	f, e = m.regionDelivery(0).render(context.Background())
 	m.mu.Unlock()
 	if e != nil || f.Diagnostics.Image != "base_mismatch" {
 		t.Fatal(f, e)

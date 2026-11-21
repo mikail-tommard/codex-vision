@@ -12,15 +12,16 @@ import (
 	"example.com/codex-vision/internal/vision"
 	"fmt"
 	"image"
-	"image/draw"
 	"image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type token struct {
@@ -64,6 +65,18 @@ func New() (*Desktop, error) {
 			return nil, e
 		}
 		d.paths[name] = absolute
+	}
+	// Keep installations with ImageMagick alone usable. Distribution builds
+	// of FFmpeg can omit x11grab, so check the compiled input devices once.
+	if path, err := exec.LookPath("ffmpeg"); err == nil {
+		if absolute, err := filepath.Abs(path); err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			devices, err := d.runner.Run(ctx, absolute, "-hide_banner", "-devices")
+			cancel()
+			if err == nil && hasX11Grab(devices) {
+				d.paths["ffmpeg"] = absolute
+			}
+		}
 	}
 	if d.session != "" && !sessionIDRE.MatchString(d.session) {
 		return nil, fmt.Errorf("invalid XDG_SESSION_ID; launch from the local desktop session")
@@ -127,10 +140,50 @@ func (d *Desktop) Capture(ctx context.Context, r platform.Rect) (image.Image, er
 	if e != nil || !b.Includes(r) {
 		return nil, fmt.Errorf("region outside X11 desktop")
 	}
-	if e = vision.Validate(image.Rect(0, 0, b.Width, b.Height)); e != nil {
+	size := image.Rect(0, 0, r.Width, r.Height)
+	if err := vision.Validate(size); err != nil {
+		return nil, err
+	}
+	if r == b {
+		return d.importPNG(ctx, r, "-window", "root")
+	}
+	if err := d.checkRootSize(ctx, b); err != nil {
+		return nil, err
+	}
+	x, y := r.X-b.X, r.Y-b.Y
+	var im image.Image
+	if d.paths["ffmpeg"] != "" {
+		im, e = d.grabRegion(ctx, size, x, y)
+	} else {
+		// ImageMagick reads the root window internally. Bound its allocation
+		// and crop before PNG encoding so only the requested pixels cross stdout.
+		if err := vision.Validate(image.Rect(0, 0, b.Width, b.Height)); err != nil {
+			return nil, err
+		}
+		geometry := fmt.Sprintf("%dx%d+%d+%d", r.Width, r.Height, x, y)
+		im, e = d.importPNG(ctx, r, "-window", "root", "-crop", geometry, "+repage")
+	}
+	if e != nil {
 		return nil, e
 	}
-	data, e := d.run(ctx, "import", "-window", "root", "png:-")
+	if e = d.unlocked(ctx); e != nil {
+		return nil, e
+	}
+	after, e := d.monitors(ctx)
+	if e != nil {
+		return nil, e
+	}
+	if !slices.Equal(ms, after) {
+		return nil, fmt.Errorf("X11 monitor layout changed during capture")
+	}
+	if e = d.checkRootSize(ctx, b); e != nil {
+		return nil, e
+	}
+	return im, ctx.Err()
+}
+
+func (d *Desktop) importPNG(ctx context.Context, r platform.Rect, args ...string) (image.Image, error) {
+	data, e := d.run(ctx, "import", append(args, "png:-")...)
 	if e != nil {
 		return nil, e
 	}
@@ -138,16 +191,53 @@ func (d *Desktop) Capture(ctx context.Context, r platform.Rect) (image.Image, er
 	if e != nil {
 		return nil, e
 	}
-	if cfg.Width != b.Width || cfg.Height != b.Height {
-		return nil, fmt.Errorf("X11 capture bounds changed or root contains unreported outputs; retry after monitor setup")
+	if cfg.Width != r.Width || cfg.Height != r.Height {
+		return nil, fmt.Errorf("X11 frame size differs from requested region")
 	}
 	im, e := png.Decode(bytes.NewReader(data))
 	if e != nil {
 		return nil, e
 	}
-	out := image.NewRGBA(image.Rect(0, 0, r.Width, r.Height))
-	draw.Draw(out, out.Bounds(), im, image.Pt(r.X-b.X, r.Y-b.Y), draw.Src)
-	return out, ctx.Err()
+	return im, ctx.Err()
+}
+
+func (d *Desktop) grabRegion(ctx context.Context, size image.Rectangle, x, y int) (image.Image, error) {
+	display, err := localDisplay(d.display)
+	if err != nil {
+		return nil, err
+	}
+	data, err := d.run(ctx, "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+		"-f", "x11grab", "-draw_mouse", "0", "-video_size", fmt.Sprintf("%dx%d", size.Dx(), size.Dy()),
+		"-grab_x", strconv.Itoa(x), "-grab_y", strconv.Itoa(y), "-framerate", "60", "-probesize", "32", "-i", display,
+		"-frames:v", "1", "-filter_threads", "1", "-threads", "1", "-pix_fmt", "rgba", "-f", "rawvideo", "pipe:1")
+	if err != nil {
+		return nil, err
+	}
+	if len(data) != size.Dx()*size.Dy()*4 {
+		return nil, fmt.Errorf("incomplete X11 region frame")
+	}
+	return &image.RGBA{Pix: data, Stride: size.Dx() * 4, Rect: size}, ctx.Err()
+}
+func hasX11Grab(devices []byte) bool {
+	for _, line := range strings.Split(string(devices), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && strings.Contains(fields[0], "D") && fields[1] == "x11grab" {
+			return true
+		}
+	}
+	return false
+}
+
+func (d *Desktop) checkRootSize(ctx context.Context, b platform.Rect) error {
+	data, err := d.run(ctx, "xdotool", "getdisplaygeometry")
+	if err != nil {
+		return err
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) != 2 || fields[0] != strconv.Itoa(b.Width) || fields[1] != strconv.Itoa(b.Height) {
+		return fmt.Errorf("X11 root size differs from monitor layout")
+	}
+	return nil
 }
 
 var windowIDsRE = regexp.MustCompile(`0x[0-9a-fA-F]+`)

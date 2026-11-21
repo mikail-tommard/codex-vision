@@ -162,3 +162,25 @@ func TestDiscoveryConcurrentInvalidationCannotRepopulateCache(t *testing.T) {
 		t.Fatal("invalidated observation was republished")
 	}
 }
+
+func TestViewRevisionCompactBytes(t *testing.T) {
+	d := discoveryFixture()
+	c, _ := connectProfileDesktop(t, uiConfig(), d, "compact")
+	args := map[string]any{"include_controls": true}
+	first := call(t, c, "desktop_observe", args, true)
+	args["after_sequence"] = agentResult(t, first).Frame.Sequence
+	full := call(t, c, "desktop_observe", args, true)
+	args["since_controls_revision"] = fieldsData(t, full)["controls_revision"]
+	short := call(t, c, "desktop_observe", args, true)
+	fullBytes, _ := json.Marshal(full)
+	shortBytes, _ := json.Marshal(short)
+	if len(short.Content) != 1 || len(full.Content) != 1 || len(shortBytes)*2 >= len(fullBytes) || d.reads.Load() != 3 {
+		t.Fatal(len(fullBytes), len(shortBytes), d.reads.Load())
+	}
+	t.Logf("repeat observe: full=%d bytes, revision=%d bytes", len(fullBytes), len(shortBytes))
+	d.contextVersion.Add(1)
+	refreshed := fieldsData(t, call(t, c, "desktop_observe", args, true))
+	if refreshed["controls_changed"] != true || refreshed["controls_revision"] == args["since_controls_revision"] {
+		t.Fatal("context change reused target IDs")
+	}
+}

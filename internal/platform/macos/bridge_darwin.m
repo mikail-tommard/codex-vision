@@ -205,11 +205,16 @@ static NSData *png(CGImageRef image) {
 @end
 @implementation CVShot
 @end
-int cv_capture(uint32_t display, int timeout_ms, void **bytes, size_t *length, char **error) { @autoreleasepool {
+int cv_capture(uint32_t display, cv_capture_rect expected, cv_capture_rect region, int timeout_ms, void **bytes, size_t *length, char **error) { @autoreleasepool {
  if(!requireConsole(error))return 0;
  if(!CGPreflightScreenCaptureAccess())return fail(error,@"Screen Recording permission missing: run --request-permissions, grant it in System Settings > Privacy & Security > Screen Recording, then restart the server/host app");
  CGRect bounds=CGDisplayBounds(display);if(CGRectIsEmpty(bounds))return fail(error,@"display is no longer available");
- if(bounds.size.width*bounds.size.height>32000000)return fail(error,@"display exceeds pixel budget");
+ CGRect global=CGRectMake(region.x,region.y,region.width,region.height);
+ if(!CGRectEqualToRect(bounds,CGRectMake(expected.x,expected.y,expected.width,expected.height)) ||
+    CGRectIsEmpty(global) || !CGRectContainsRect(bounds,global))
+   return fail(error,@"display geometry changed before regional capture");
+ if(global.size.width*global.size.height>32000000)return fail(error,@"region exceeds pixel budget");
+ CGRect local=CGRectOffset(global,-bounds.origin.x,-bounds.origin.y);
  NSData *data=nil;
 Class manager=NSClassFromString(@"SCScreenshotManager");SEL captureSelector=NSSelectorFromString(@"captureImageWithFilter:configuration:completionHandler:");
  if(manager&&[manager respondsToSelector:captureSelector]) {
@@ -218,7 +223,7 @@ Class manager=NSClassFromString(@"SCScreenshotManager");SEL captureSelector=NSSe
  if(err){state.error=err.localizedDescription;dispatch_semaphore_signal(done);return;}
  SCDisplay *target=nil;for(SCDisplay *item in content.displays)if(item.displayID==display){target=item;break;}
  if(!target){state.error=@"display not available in ScreenCaptureKit";dispatch_semaphore_signal(done);return;}
- SCContentFilter *filter=[[SCContentFilter alloc]initWithDisplay:target excludingWindows:@[]];SCStreamConfiguration *cfg=[SCStreamConfiguration new];cfg.width=(size_t)bounds.size.width;cfg.height=(size_t)bounds.size.height;cfg.showsCursor=NO;
+ SCContentFilter *filter=[[SCContentFilter alloc]initWithDisplay:target excludingWindows:@[]];SCStreamConfiguration *cfg=[SCStreamConfiguration new];cfg.sourceRect=local;cfg.width=(size_t)global.size.width;cfg.height=(size_t)global.size.height;cfg.showsCursor=NO;
  typedef void(*CaptureFunction)(id,SEL,SCContentFilter*,SCStreamConfiguration*,void(^)(CGImageRef,NSError*));
  ((CaptureFunction)objc_msgSend)(manager,captureSelector,filter,cfg,^(CGImageRef image,NSError *captureError){state.error=captureError.localizedDescription;state.data=png(image);dispatch_semaphore_signal(done);});
  }];
@@ -230,10 +235,11 @@ Class manager=NSClassFromString(@"SCScreenshotManager");SEL captureSelector=NSSe
  typedef CGImageRef(*LegacyShot)(CGRect,CGWindowListOption,CGWindowID,CGWindowImageOption);
  LegacyShot capture=(LegacyShot)dlsym(RTLD_DEFAULT,"CGWindowListCreateImage");
  if(!capture)return fail(error,@"legacy capture unavailable; rebuild with macOS SDK 14+ for ScreenCaptureKit");
- CGImageRef image=capture(bounds,kCGWindowListOptionOnScreenOnly,kCGNullWindowID,kCGWindowImageNominalResolution);data=png(image);if(image)CGImageRelease(image);
+ CGImageRef image=capture(global,kCGWindowListOptionOnScreenOnly,kCGNullWindowID,kCGWindowImageNominalResolution);data=png(image);if(image)CGImageRelease(image);
  }
  if(!data)return fail(error,@"screen capture returned no image; verify Screen Recording permission and SDK/runtime support");
  if(!requireConsole(error))return 0;
+ if(!CGRectEqualToRect(bounds,CGDisplayBounds(display)))return fail(error,@"display geometry changed during capture");
  if(data.length>134217728)return fail(error,@"encoded image exceeds memory budget");
  *bytes=malloc(data.length);if(!*bytes)return fail(error,@"out of memory");memcpy(*bytes,data.bytes,data.length);*length=data.length;return 1;
 }}

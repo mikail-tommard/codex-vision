@@ -179,3 +179,28 @@ func TestPointerGuardRejectsChangedWindowBeforePosting(t *testing.T) {
 		})
 	}
 }
+
+func TestCaptureDisplayIntersections(t *testing.T) {
+	ms := []platform.Monitor{
+		{ID: "left", Bounds: platform.Rect{X: -100, Width: 100, Height: 80}, PixelWidth: 200, PixelHeight: 160},
+		{ID: "right", Bounds: platform.Rect{X: 5, Width: 100, Height: 80}},
+	}
+	region := platform.Rect{X: -3, Y: 10, Width: 11, Height: 2}
+	expected := map[string]image.Rectangle{"left": image.Rect(-3, 10, 0, 12), "right": image.Rect(5, 10, 8, 12)}
+	im, err := captureDisplays(context.Background(), region, ms, func(_ context.Context, id string, _, tile image.Rectangle) (image.Image, error) {
+		if tile != expected[id] {
+			t.Fatalf("%s tile %v", id, tile)
+		}
+		delete(expected, id)
+		return image.White, nil
+	})
+	if err != nil || len(expected) != 0 {
+		t.Fatal(err, expected)
+	}
+	for x := 0; x < 11; x++ {
+		v, _, _, _ := im.At(x, 0).RGBA()
+		if (v != 0) != (x < 3 || x >= 8) {
+			t.Fatalf("wrong pixel at x=%d", x)
+		}
+	}
+}
